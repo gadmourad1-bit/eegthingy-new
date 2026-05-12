@@ -1,0 +1,7 @@
+numpy==2.4.4
+matplotlib==3.10.9
+pyserial==3.5
+requests==2.33.1
+pyglet==2.1.14
+brainflow==5.21.0
+mne==1.12.1
