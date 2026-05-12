@@ -7,16 +7,18 @@ import sys
 import threading
 import time
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from brainflow.board_shim import BoardShim
-from config import TARGET_MAPPINGS, EEG_CHANNELS, DELTA_T, DATA_DIR, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS
+from config import DATA_DIR, DELTA_T, EEG_CHANNELS, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score
 from utils.devices import OpenBCI
 from ws import WebSocket
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from smoother import Smoother
+from gui import GUI
 
 def bandpass(data, sfreq):
     return mne.filter.filter_data(data, sfreq=sfreq, verbose=False, **FILTER_KWARGS)
@@ -105,6 +107,7 @@ def run_offline():
     epochs_train = mne.concatenate_epochs(
         [process_data(f, TARGET_MAPPINGS) for f in train_files]
     )
+
     epochs_test = mne.concatenate_epochs(
         [process_data(f, TARGET_MAPPINGS) for f in test_files]
     ) if len(test_files) > 1 else process_data(test_files[0], TARGET_MAPPINGS)
@@ -151,7 +154,7 @@ def run_online():
     X_train = epochs_all.get_data()
     y_train = epochs_all.events[:, -1]
     n_channels = X_train.shape[1]
-    n_times = X_train.shape[2]  # samples per epoch the model was trained on
+    n_times = X_train.shape[2]
 
     clf = build_pipeline()
     clf.fit(X_train, y_train)
@@ -171,6 +174,7 @@ def run_online():
 
     ws = WebSocket()
     ws.start()
+    smoother = Smoother(ws)
 
     bci = OpenBCI(interval=DELTA_T).open()
     if bci.board is None:
@@ -222,23 +226,22 @@ def run_online():
         pred = clf.classes_[idx]
         conf = probs[idx]
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
-        print(f"prediction: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  ({window_n} samples)")
 
-        ws.broadcast({
-            "prediction": int(pred),
-            "confidence": float(conf),
-            "probs": {str(c): float(p) for c, p in zip(clf.classes_, probs)},
-            "samples": int(window_n),
-            "timestamp": time.time(),
-        })
+        decision, consensus = smoother.add(
+            prediction=pred,
+            confidence=conf,
+            probs=dict(zip(clf.classes_, probs)),
+        )
+        tag = decision if consensus else "—"
+        print(f"raw: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  → smoothed: {tag}")
 
     bci.callback = on_chunk
     bci.start()
 
-    print("\nLive classification — Ctrl+C to stop.\n")
+    print("\nLive classification — close the GUI window or Ctrl+C to stop.\n")
+    gui = GUI(bci, smoother, clf.classes_)
     try:
-        while True:
-            time.sleep(0.5)
+        gui.mainloop()
     except KeyboardInterrupt:
         print("\nStopping…")
     finally:
