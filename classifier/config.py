@@ -12,9 +12,6 @@ TARGET_MAPPINGS = {'21': 1, '22': 2}
 WS_HOST = '0.0.0.0'
 WS_PORT = 8765
 
-# Temporal smoother — M-of-N voting on the last N predictions.
-# Pre-vote: any prediction with confidence < SMOOTHER_CONF_FLOOR is dropped
-# (treated as abstain). Of those that vote, a class wins if it has >= M votes.
 SMOOTHER_N = 3
 SMOOTHER_M = 2
 SMOOTHER_CONF_FLOOR = 0.60
