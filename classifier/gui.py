@@ -45,6 +45,16 @@ class GUI:
         self.latest_decision = None
         self.latest_consensus = False
 
+        # Decision-onset transitions: list of (rel_t, decision) at every consensus change.
+        self.transition_hist = deque(maxlen=max_points)
+        self.last_decision = None
+        # Colors keyed by decision (consensus class).
+        self.decision_colors = {}
+        if len(self.class_labels) > 0:
+            self.decision_colors[self.class_labels[0]] = "tab:blue"
+        if len(self.class_labels) > 1:
+            self.decision_colors[self.class_labels[1]] = "tab:red"
+
         # Channel positions from standard_1020 montage → per-view 2D projections.
         montage = mne.channels.make_standard_montage("standard_1020")
         ch_pos = montage.get_positions()["ch_pos"]
@@ -127,6 +137,7 @@ class GUI:
         self.ax_conf.set_ylim(0, 1)
         self.ax_conf.set_xlim(-HISTORY_SECONDS, 0)
         self.ax_conf.axhline(0.5, color="gray", lw=0.5, ls="--")
+
         colors = ["tab:blue", "tab:red", "tab:green", "tab:orange"]
         self.conf_lines = {}
         for i, c in enumerate(self.class_labels):
@@ -136,6 +147,16 @@ class GUI:
             )
             self.conf_lines[c] = line
         self.ax_conf.legend(loc="upper right")
+
+        # Vertical onset markers — one LineCollection per class, segments updated each refresh.
+        from matplotlib.collections import LineCollection
+        self.onset_collections = {}
+        for c in self.class_labels:
+            color = self.decision_colors.get(c, "gray")
+            lc = LineCollection([], colors=color, alpha=0.7, lw=1.2,
+                                linestyles="dashed", animated=True, zorder=1)
+            self.ax_conf.add_collection(lc)
+            self.onset_collections[c] = lc
 
         # Probability bars.
         self.ax_probs.set_title("current probs")
@@ -248,12 +269,15 @@ class GUI:
             self.root.after(TICK_MS, self._tick)
             return
 
-        # Prediction-driven artists (conf lines, probs, decision text) → blit.
+        # Prediction-driven artists (onset markers, conf lines, probs, decision text) → blit.
         if self._pred_dirty:
+            self._refresh_onsets()
             self._refresh_conf_lines()
             self._refresh_probs()
             self._refresh_decision()
             self.canvas.restore_region(self.bgs["fig"])
+            for lc in self.onset_collections.values():
+                self.ax_conf.draw_artist(lc)
             for line in self.conf_lines.values():
                 self.ax_conf.draw_artist(line)
             for bar in self.prob_bars:
@@ -308,6 +332,13 @@ class GUI:
         self.latest_decision = smoothed["decision"]
         self.latest_consensus = smoothed["consensus"]
 
+        # Record onset: transition into a new consensus class.
+        new_d = smoothed["decision"] if smoothed["consensus"] else None
+        if new_d != self.last_decision:
+            if new_d is not None:
+                self.transition_hist.append((rel_t, new_d))
+            self.last_decision = new_d
+
     def _refresh_conf_lines(self):
         if not self.t_hist:
             return
@@ -315,6 +346,24 @@ class GUI:
         ts = np.fromiter(self.t_hist, dtype=float) - now
         for c, line in self.conf_lines.items():
             line.set_data(ts, np.fromiter(self.conf_hist[c], dtype=float))
+
+    def _refresh_onsets(self):
+        # For each class, set the LineCollection segments to vertical lines at
+        # each transition into that class within the visible window.
+        if not self.t_hist:
+            for lc in self.onset_collections.values():
+                lc.set_segments([])
+            return
+        now = self.t_hist[-1]
+        per_class = {c: [] for c in self.class_labels}
+        for rel_t, d in self.transition_hist:
+            x = rel_t - now
+            if x < -HISTORY_SECONDS or x > 0:
+                continue
+            if d in per_class:
+                per_class[d].append([(x, 0.0), (x, 1.0)])
+        for c, segs in per_class.items():
+            self.onset_collections[c].set_segments(segs)
 
     def _refresh_probs(self):
         for bar, c in zip(self.prob_bars, self.class_labels):
