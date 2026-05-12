@@ -3,6 +3,7 @@ import threading
 import time
 import tkinter as tk
 from collections import deque
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -10,15 +11,13 @@ import matplotlib.pyplot as plt
 import mne
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from scipy.interpolate import griddata
 
 from config import EEG_CHANNELS
 
 
 HISTORY_SECONDS = 30
 TICK_MS = 16  # ~60Hz
-TOPO_HZ = 15  # topomap refresh rate (off the main thread)
-TOPO_GRID = 40  # interpolation grid resolution
+BRAIN_HZ = 2  # source-localization refresh rate (heavy)
 FIG_DPI = 80
 
 
@@ -26,21 +25,21 @@ class GUI:
     """Live visualizer. Tkinter on the main thread, blit for fast redraws.
 
     Threads:
-      - main (tk):  drains prediction/topomap queues, blits at 60Hz
-      - topo:       reads bci.get_data(), computes interp grid, pushes to queue
-      - smoother:   pushes prediction events into self.queue (from drain thread)
+      - main (tk):   drains payload/brain queues, blits at ~60Hz
+      - source set:  one-shot — fetches fsaverage, builds fwd + inverse
+      - render:      2 Hz — applies inverse, renders stat_map, pushes image
+      - smoother:    pushes prediction events into self.queue (drain thread)
     """
 
-    def __init__(self, bci, smoother, class_labels):
+    def __init__(self, bci, smoother, class_labels, sfreq):
         self.bci = bci
         self.smoother = smoother
         self.class_labels = list(class_labels)
+        self.sfreq = float(sfreq)
         self.queue = queue.Queue()
         smoother.subscribe(self.queue.put)
 
-        # Time-series history. We append a single point per smoother event
-        # and replot relative to "now" each tick.
-        max_points = HISTORY_SECONDS * 20  # ample headroom
+        max_points = HISTORY_SECONDS * 20
         self.t_hist = deque(maxlen=max_points)
         self.conf_hist = {c: deque(maxlen=max_points) for c in self.class_labels}
         self.t0 = None
@@ -49,57 +48,50 @@ class GUI:
         self.latest_decision = None
         self.latest_consensus = False
 
-        # Channel layout for the topomap.
-        montage = mne.channels.make_standard_montage("standard_1020")
-        info = mne.create_info(ch_names=EEG_CHANNELS, sfreq=250.0, ch_types="eeg")
-        info.set_montage(montage, on_missing="ignore")
-        ch_pos = montage.get_positions()["ch_pos"]
-        positions = []
-        for name in EEG_CHANNELS:
-            p = ch_pos.get(name)
-            positions.append([p[0], p[1]] if p is not None else [0.0, 0.0])
-        self.positions_2d = np.array(positions)
+        # Most recent filtered EEG window pushed in from start.py.
+        self.window_lock = threading.Lock()
+        self.latest_window = None
 
-        # Precompute interpolation grid + head mask once.
-        r = float(np.max(np.linalg.norm(self.positions_2d, axis=1))) * 1.15
-        self.head_r = r
-        xs = np.linspace(-r, r, TOPO_GRID)
-        ys = np.linspace(-r, r, TOPO_GRID)
-        self.grid_x, self.grid_y = np.meshgrid(xs, ys)
-        self.head_mask = (self.grid_x ** 2 + self.grid_y ** 2) <= r ** 2
-        self.topo_extent = (-r, r, -r, r)
+        # Most recent rendered brain image (RGBA numpy array).
+        self.brain_lock = threading.Lock()
+        self.latest_brain_img = None
+        self.brain_status = "initializing source localization..."
 
-        # Topomap thread bits.
-        self.topo_queue = queue.Queue(maxsize=2)
-        self.topo_stop = threading.Event()
+        self.source_ready = False
+        self.stop_evt = threading.Event()
 
         self._build_window()
-        self._start_topo_thread()
+        self._start_source_setup_thread()
 
-        # Per-axes backgrounds for cheap blit. Recaptured on resize.
-        self.bgs = {}  # axes -> background
+        self.bgs = {}
         self._pending_bg_capture = True
-        self._pred_dirty = False  # prediction-driven artists need a redraw
-        self._topo_dirty = False  # topomap artist needs a redraw
+        self._pred_dirty = False
+        self._brain_dirty = False
         self.canvas.mpl_connect("draw_event", self._on_draw)
         self.canvas.mpl_connect("resize_event", self._on_resize)
         self.root.after(50, self._tick)
+
+    # ------------------------------------------------------------------ ext
+
+    def push_window(self, eeg):
+        """Called from start.py's on_chunk with the latest filtered window."""
+        with self.window_lock:
+            self.latest_window = np.ascontiguousarray(eeg)
 
     # ------------------------------------------------------------------ build
 
     def _build_window(self):
         self.root = tk.Tk()
         self.root.title("EEG Live Viz")
-        self.root.geometry("1200x800")
+        self.root.geometry("1400x900")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.fig = plt.Figure(figsize=(12, 8), dpi=FIG_DPI, constrained_layout=True)
-        gs = self.fig.add_gridspec(2, 2, height_ratios=[2, 1])
+        self.fig = plt.Figure(figsize=(14, 9), dpi=FIG_DPI, constrained_layout=True)
+        gs = self.fig.add_gridspec(2, 2, height_ratios=[1, 1], width_ratios=[1, 2])
         self.ax_conf = self.fig.add_subplot(gs[0, :])
         self.ax_probs = self.fig.add_subplot(gs[1, 0])
-        self.ax_topo = self.fig.add_subplot(gs[1, 1])
+        self.ax_brain = self.fig.add_subplot(gs[1, 1])
 
-        # Confidence time series.
         self.ax_conf.set_title("confidence over time")
         self.ax_conf.set_xlabel("seconds")
         self.ax_conf.set_ylabel("p(class)")
@@ -116,7 +108,6 @@ class GUI:
             self.conf_lines[c] = line
         self.ax_conf.legend(loc="upper right")
 
-        # Probability bars.
         self.ax_probs.set_title("current probs")
         self.ax_probs.set_ylim(0, 1)
         self.prob_bars = self.ax_probs.bar(
@@ -127,31 +118,19 @@ class GUI:
         for bar in self.prob_bars:
             bar.set_animated(True)
 
-        # Topomap.
-        self.ax_topo.set_title("EEG power (RMS)")
-        self.ax_topo.set_xticks([])
-        self.ax_topo.set_yticks([])
-        self.ax_topo.set_aspect("equal")
-        self.ax_topo.set_xlim(-self.head_r, self.head_r)
-        self.ax_topo.set_ylim(-self.head_r, self.head_r)
-        empty = np.full((TOPO_GRID, TOPO_GRID), np.nan)
-        cmap = matplotlib.cm.get_cmap("viridis").copy()
-        cmap.set_bad((1, 1, 1, 0))
-        self.topo_img = self.ax_topo.imshow(
-            empty, extent=self.topo_extent, origin="lower",
-            cmap=cmap, animated=True, interpolation="bilinear",
+        self.ax_brain.set_title("source localization (dSPM on fsaverage)")
+        self.ax_brain.set_xticks([])
+        self.ax_brain.set_yticks([])
+        # Placeholder text shown until first render.
+        self.brain_status_text = self.ax_brain.text(
+            0.5, 0.5, self.brain_status,
+            transform=self.ax_brain.transAxes,
+            ha="center", va="center", fontsize=11, color="gray",
         )
-        # Sensor dots — static, drawn into background.
-        self.ax_topo.scatter(
-            self.positions_2d[:, 0], self.positions_2d[:, 1],
-            s=8, c="k", zorder=3,
-        )
-        head = plt.Circle((0, 0), self.head_r, color="k", fill=False, lw=1)
-        self.ax_topo.add_patch(head)
+        self.brain_img_artist = None  # created on first render
 
-        # Decision label (figure-level text).
         self.decision_text = self.fig.text(
-            0.5, 0.97, "—", ha="center", va="top",
+            0.5, 0.99, "—", ha="center", va="top",
             fontsize=24, fontweight="bold", color="gray",
             animated=True,
         )
@@ -159,70 +138,142 @@ class GUI:
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ----------------------------------------------------------- topo thread
+    # ------------------------------------------------------------------ setup
 
-    def _start_topo_thread(self):
-        def worker():
-            period = 1.0 / TOPO_HZ
-            while not self.topo_stop.is_set():
+    def _start_source_setup_thread(self):
+        def setup():
+            try:
+                self._set_brain_status("fetching fsaverage…")
+                from mne.datasets import fetch_fsaverage
+                from mne.minimum_norm import make_inverse_operator
+
+                fs_dir = fetch_fsaverage(verbose=False)
+                subjects_dir = str(Path(fs_dir).parent)
+
+                self._set_brain_status("reading BEM…")
+                bem_path = Path(fs_dir) / "bem" / "fsaverage-5120-5120-5120-bem-sol.fif"
+                bem = mne.read_bem_solution(str(bem_path), verbose=False)
+
+                cache_dir = Path(fs_dir) / "mne_cache"
+                cache_dir.mkdir(exist_ok=True)
+                vol_src_path = cache_dir / "fsaverage-vol-10mm-src.fif"
+
+                if vol_src_path.exists():
+                    self._set_brain_status("loading source space…")
+                    src = mne.read_source_spaces(str(vol_src_path), verbose=False)
+                else:
+                    self._set_brain_status("computing volume source space (one-time, ~30s)…")
+                    src = mne.setup_volume_source_space(
+                        "fsaverage", pos=10.0, bem=bem,
+                        subjects_dir=subjects_dir, verbose=False,
+                    )
+                    mne.write_source_spaces(str(vol_src_path), src, overwrite=True, verbose=False)
+
+                montage = mne.channels.make_standard_montage("standard_1020")
+                info = mne.create_info(EEG_CHANNELS, sfreq=self.sfreq, ch_types="eeg")
+                info.set_montage(montage, on_missing="ignore")
+
+                fwd_path = cache_dir / f"fsaverage-{len(EEG_CHANNELS)}ch-vol-fwd.fif"
+                if fwd_path.exists():
+                    self._set_brain_status("loading forward solution…")
+                    fwd = mne.read_forward_solution(str(fwd_path), verbose=False)
+                else:
+                    self._set_brain_status("computing forward solution (one-time, ~30s)…")
+                    fwd = mne.make_forward_solution(
+                        info, trans="fsaverage", src=src, bem=bem,
+                        eeg=True, meg=False, verbose=False,
+                    )
+                    mne.write_forward_solution(str(fwd_path), fwd, overwrite=True, verbose=False)
+
+                self._set_brain_status("building inverse operator…")
+                cov = mne.make_ad_hoc_cov(info, verbose=False)
+                inv = make_inverse_operator(info, fwd, cov, loose=1.0, depth=0.8, verbose=False)
+
+                self.evoked_info = info
+                self.inv = inv
+                self.src = src
+                self.subject = "fsaverage"
+                self.subjects_dir = subjects_dir
+                self.source_ready = True
+
+                self._set_brain_status("ready — waiting for data…")
+                self._start_render_thread()
+            except Exception as e:
+                msg = f"source setup failed:\n{e}"
+                print(f"[gui] {msg}")
+                self._set_brain_status(msg)
+
+        threading.Thread(target=setup, daemon=True).start()
+
+    def _set_brain_status(self, msg):
+        self.brain_status = msg
+        # The status text is on the static background — flag a full redraw
+        # so the new message appears on next draw.
+        self._pending_bg_capture = True
+
+    # ------------------------------------------------------------------ render
+
+    def _start_render_thread(self):
+        from mne.minimum_norm import apply_inverse
+
+        def loop():
+            period = 1.0 / BRAIN_HZ
+            min_samples = int(0.25 * self.sfreq)
+            while not self.stop_evt.is_set():
                 t0 = time.perf_counter()
                 try:
-                    data = self.bci.get_data()
-                    eeg = data.get("eeg")
-                    if eeg is not None and len(eeg) > 0:
-                        img = self._interp(eeg)
-                        # Drop oldest if queue full — we only care about latest.
-                        try:
-                            self.topo_queue.put_nowait(img)
-                        except queue.Full:
-                            try:
-                                self.topo_queue.get_nowait()
-                            except queue.Empty:
-                                pass
-                            try:
-                                self.topo_queue.put_nowait(img)
-                            except queue.Full:
-                                pass
+                    with self.window_lock:
+                        win = None if self.latest_window is None else self.latest_window.copy()
+
+                    if win is not None and win.shape[1] >= min_samples:
+                        self._render_brain(win, apply_inverse)
                 except Exception as e:
-                    print(f"topo worker error: {e}")
+                    print(f"[gui] render error: {e}")
+
                 dt = time.perf_counter() - t0
                 rest = period - dt
                 if rest > 0:
                     time.sleep(rest)
 
-        self.topo_thread = threading.Thread(target=worker, daemon=True)
-        self.topo_thread.start()
+        threading.Thread(target=loop, daemon=True).start()
 
-    def _interp(self, eeg):
-        n = min(len(eeg), len(self.positions_2d))
-        values = np.zeros(len(self.positions_2d))
-        values[:n] = eeg[:n]
-        img = griddata(
-            self.positions_2d, values, (self.grid_x, self.grid_y),
-            method="linear", fill_value=np.nan,
+    def _render_brain(self, win, apply_inverse):
+        evoked = mne.EvokedArray(win, self.evoked_info, tmin=0.0, verbose=False)
+        evoked.set_eeg_reference("average", projection=True, verbose=False)
+        evoked.apply_proj(verbose=False)
+
+        stc = apply_inverse(
+            evoked, self.inv, lambda2=1.0 / 9.0, method="dSPM", verbose=False
         )
-        img = np.where(self.head_mask, img, np.nan)
-        return img
 
-    # ----------------------------------------------------------- draw events
+        fig = stc.plot(
+            src=self.src, subject=self.subject,
+            subjects_dir=self.subjects_dir,
+            mode="stat_map",
+            initial_time=stc.times[-1],
+            show=False, verbose=False,
+        )
+        fig.canvas.draw()
+        img = np.asarray(fig.canvas.buffer_rgba()).copy()
+        plt.close(fig)
+
+        with self.brain_lock:
+            self.latest_brain_img = img
+
+    # ------------------------------------------------------------------ draw
 
     def _on_draw(self, _event):
         if self._pending_bg_capture or not self.bgs:
-            self.bgs[self.ax_topo] = self.canvas.copy_from_bbox(self.ax_topo.bbox)
             self.bgs[self.fig] = self.canvas.copy_from_bbox(self.fig.bbox)
             self._pending_bg_capture = False
-            # Force a full redraw of animated artists on first frame.
             self._pred_dirty = True
-            self._topo_dirty = True
 
     def _on_resize(self, _event):
         self._pending_bg_capture = True
         self.canvas.draw_idle()
 
-    # ----------------------------------------------------------- per-tick
-
     def _tick(self):
-        # Drain prediction events; mark dirty only if anything arrived.
+        # Drain prediction events.
         got_pred = False
         while True:
             try:
@@ -234,30 +285,30 @@ class GUI:
         if got_pred:
             self._pred_dirty = True
 
-        # Drain latest topomap image; only the last one matters.
-        latest_img = None
-        while True:
-            try:
-                latest_img = self.topo_queue.get_nowait()
-            except queue.Empty:
-                break
-        if latest_img is not None:
-            self.topo_img.set_data(latest_img)
-            finite = latest_img[np.isfinite(latest_img)]
-            if finite.size:
-                lo, hi = float(finite.min()), float(finite.max())
-                if hi - lo < 1e-9:
-                    hi = lo + 1e-9
-                self.topo_img.set_clim(lo, hi)
-            self._topo_dirty = True
+        # Pick up the latest brain render (replaces previous, never queues).
+        new_brain = None
+        with self.brain_lock:
+            if self.latest_brain_img is not None:
+                new_brain = self.latest_brain_img
+                self.latest_brain_img = None
+
+        # Apply new brain image — this changes static art, so triggers a full
+        # canvas redraw (at most BRAIN_HZ, so the cost is fine).
+        if new_brain is not None:
+            self._apply_brain_image(new_brain)
+
+        # Also redraw the canvas fully whenever bg is invalidated (status text
+        # changes, brain image updates, resize).
+        if self._pending_bg_capture:
+            self.canvas.draw_idle()
+            self.root.after(TICK_MS, self._tick)
+            return
 
         if not self.bgs:
             self.canvas.draw_idle()
             self.root.after(TICK_MS, self._tick)
             return
 
-        # Predictions arrive at ~DELTA_T cadence (a few Hz). When they change,
-        # blit the whole figure once — fastest cumulative cost.
         if self._pred_dirty:
             self._refresh_conf_lines()
             self._refresh_probs()
@@ -268,20 +319,35 @@ class GUI:
                 self.ax_conf.draw_artist(line)
             for bar in self.prob_bars:
                 self.ax_probs.draw_artist(bar)
-            self.ax_topo.draw_artist(self.topo_img)
             self.fig.draw_artist(self.decision_text)
             self.canvas.blit(self.fig.bbox)
             self._pred_dirty = False
-            self._topo_dirty = False  # we just redrew the topo too
-
-        elif self._topo_dirty:
-            # Topomap updates more frequently (~15Hz). Just blit its axes.
-            self.canvas.restore_region(self.bgs[self.ax_topo])
-            self.ax_topo.draw_artist(self.topo_img)
-            self.canvas.blit(self.ax_topo.bbox)
-            self._topo_dirty = False
 
         self.root.after(TICK_MS, self._tick)
+
+    def _apply_brain_image(self, img):
+        if self.brain_status_text is not None:
+            self.brain_status_text.set_visible(False)
+        h, w = img.shape[:2]
+        extent = (0, w, h, 0)  # origin='upper'
+        if self.brain_img_artist is None:
+            self.brain_img_artist = self.ax_brain.imshow(
+                img, aspect="equal", origin="upper", extent=extent,
+            )
+            self.ax_brain.set_anchor("C")  # center inside the axes box
+        else:
+            existing = self.brain_img_artist.get_array()
+            if existing is not None and existing.shape == img.shape:
+                self.brain_img_artist.set_data(img)
+            else:
+                self.brain_img_artist.remove()
+                self.brain_img_artist = self.ax_brain.imshow(
+                    img, aspect="equal", origin="upper", extent=extent,
+                )
+                self.ax_brain.set_anchor("C")
+        self.ax_brain.set_xlim(0, w)
+        self.ax_brain.set_ylim(h, 0)
+        self._pending_bg_capture = True
 
     def _consume_payload(self, payload):
         ts = payload["timestamp"]
@@ -304,7 +370,6 @@ class GUI:
     def _refresh_conf_lines(self):
         if not self.t_hist:
             return
-        # Right-justify: latest sample at x=0, older samples at negative x.
         now = self.t_hist[-1]
         ts = np.fromiter(self.t_hist, dtype=float) - now
         for c, line in self.conf_lines.items():
@@ -322,10 +387,10 @@ class GUI:
             self.decision_text.set_text(f"class {self.latest_decision}")
             self.decision_text.set_color("tab:green" if self.latest_consensus else "gray")
 
-    # ----------------------------------------------------------- shutdown
+    # ------------------------------------------------------------------ exit
 
     def _on_close(self):
-        self.topo_stop.set()
+        self.stop_evt.set()
         self.root.quit()
         self.root.destroy()
 

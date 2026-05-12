@@ -197,6 +197,9 @@ def run_online():
 
     print(f"window: {DELTA_T}s ({window_n} samples), buffer: {buffer_n} samples")
 
+    # Create the GUI before BCI starts streaming so push_window has a target.
+    gui = GUI(bci, smoother, clf.classes_, sfreq)
+
     def on_chunk(chunk):
         nonlocal buffer
         eeg_all = chunk[bci.eeg, :]
@@ -220,6 +223,7 @@ def run_online():
         # then take only the last DELTA_T worth of samples for prediction.
         filtered = bandpass(buf, sfreq)
         window = filtered[:, -window_n:][np.newaxis, :, :]
+        gui.push_window(filtered[:, -window_n:])
 
         probs = clf.predict_proba(window)[0]
         idx = int(np.argmax(probs))
@@ -239,7 +243,6 @@ def run_online():
     bci.start()
 
     print("\nLive classification — close the GUI window or Ctrl+C to stop.\n")
-    gui = GUI(bci, smoother, clf.classes_)
     try:
         gui.mainloop()
     except KeyboardInterrupt:
