@@ -3,7 +3,6 @@ import threading
 import time
 import tkinter as tk
 from collections import deque
-from pathlib import Path
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -14,21 +13,19 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from config import EEG_CHANNELS
 
-
 HISTORY_SECONDS = 30
-TICK_MS = 16  # ~60Hz
-BRAIN_HZ = 2  # source-localization refresh rate (heavy)
+TICK_MS = 16  # ~60Hz GUI tick
+TOPO_HZ = 5   # mne.viz.plot_topomap is slow (~150-300ms total for 3 views)
 FIG_DPI = 80
 
-
 class GUI:
-    """Live visualizer. Tkinter on the main thread, blit for fast redraws.
+    """Live visualizer. Tkinter on main thread; topomap interpolation on
+    a worker thread; classification on the BrainFlow drain thread.
 
-    Threads:
-      - main (tk):   drains payload/brain queues, blits at ~60Hz
-      - source set:  one-shot — fetches fsaverage, builds fwd + inverse
-      - render:      2 Hz — applies inverse, renders stat_map, pushes image
-      - smoother:    pushes prediction events into self.queue (drain thread)
+    Three topographic views computed by projecting electrode positions:
+      top  : axial   (looking down)
+      left : sagittal-left
+      back : coronal (from behind, subject's left on viewer's left)
     """
 
     def __init__(self, bci, smoother, class_labels, sfreq):
@@ -48,50 +45,82 @@ class GUI:
         self.latest_decision = None
         self.latest_consensus = False
 
-        # Most recent filtered EEG window pushed in from start.py.
-        self.window_lock = threading.Lock()
-        self.latest_window = None
+        # Channel positions from standard_1020 montage → per-view 2D projections.
+        montage = mne.channels.make_standard_montage("standard_1020")
+        ch_pos = montage.get_positions()["ch_pos"]
+        pos3 = np.array([
+            ch_pos[name] if name in ch_pos else np.zeros(3)
+            for name in EEG_CHANNELS
+        ])
+        self.views = self._build_views(pos3)
 
-        # Most recent rendered brain image (RGBA numpy array).
-        self.brain_lock = threading.Lock()
-        self.latest_brain_img = None
-        self.brain_status = "initializing source localization..."
-
-        self.source_ready = False
+        self.topo_queue = queue.Queue(maxsize=2)
         self.stop_evt = threading.Event()
 
         self._build_window()
-        self._start_source_setup_thread()
+        self._start_topo_thread()
 
         self.bgs = {}
         self._pending_bg_capture = True
         self._pred_dirty = False
-        self._brain_dirty = False
+        self._topo_dirty = False
         self.canvas.mpl_connect("draw_event", self._on_draw)
         self.canvas.mpl_connect("resize_event", self._on_resize)
         self.root.after(50, self._tick)
 
-    # ------------------------------------------------------------------ ext
+    def push_window(self, _eeg):
+        """Accepted but unused — kept for compatibility with start.py."""
+        pass
 
-    def push_window(self, eeg):
-        """Called from start.py's on_chunk with the latest filtered window."""
-        with self.window_lock:
-            self.latest_window = np.ascontiguousarray(eeg)
+    # ----------------------------------------------------------------- views
 
-    # ------------------------------------------------------------------ build
+    def _build_views(self, pos3):
+        # Rotation R takes head coords → "view space" where +z is the view's
+        # up/forward direction. After rotation, channels in the upper
+        # hemisphere (z>0) are visible from that view.
+        rotations = {
+            "top":  np.eye(3, dtype=float),                                     # head as-is
+            "left": np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=float),  # -x → +z
+            "back": np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=float),  # -y → +z
+        }
+        views = {}
+        for name, R in rotations.items():
+            rotated = pos3 @ R.T
+            norms = np.linalg.norm(rotated, axis=1, keepdims=True)
+            norms = np.where(norms < 1e-9, 1.0, norms)
+            unit = rotated / norms
+            # Azimuthal equidistant: theta = angle from +z, project to 2D disc.
+            theta = np.arccos(np.clip(unit[:, 2], -1.0, 1.0))
+            phi = np.arctan2(unit[:, 1], unit[:, 0])
+            x2d = theta * np.cos(phi)
+            y2d = theta * np.sin(phi)
+            pos2d = np.column_stack([x2d, y2d])
+            visible = unit[:, 2] > -0.05  # upper hemisphere + a sliver of equator
+            views[name] = {
+                "positions": pos2d[visible],
+                "visible": visible,
+            }
+        return views
+
+    # ----------------------------------------------------------------- build
 
     def _build_window(self):
         self.root = tk.Tk()
         self.root.title("EEG Live Viz")
-        self.root.geometry("1400x900")
+        self.root.geometry("1400x800")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.fig = plt.Figure(figsize=(14, 9), dpi=FIG_DPI, constrained_layout=True)
-        gs = self.fig.add_gridspec(2, 2, height_ratios=[1, 1], width_ratios=[1, 2])
+        self.fig = plt.Figure(figsize=(14, 8), dpi=FIG_DPI, constrained_layout=True)
+        gs = self.fig.add_gridspec(2, 4, height_ratios=[1, 1], width_ratios=[1.2, 1, 1, 1])
         self.ax_conf = self.fig.add_subplot(gs[0, :])
         self.ax_probs = self.fig.add_subplot(gs[1, 0])
-        self.ax_brain = self.fig.add_subplot(gs[1, 1])
+        self.topo_axes = {
+            "top":  self.fig.add_subplot(gs[1, 1]),
+            "left": self.fig.add_subplot(gs[1, 2]),
+            "back": self.fig.add_subplot(gs[1, 3]),
+        }
 
+        # Confidence time series.
         self.ax_conf.set_title("confidence over time")
         self.ax_conf.set_xlabel("seconds")
         self.ax_conf.set_ylabel("p(class)")
@@ -108,6 +137,7 @@ class GUI:
             self.conf_lines[c] = line
         self.ax_conf.legend(loc="upper right")
 
+        # Probability bars.
         self.ax_probs.set_title("current probs")
         self.ax_probs.set_ylim(0, 1)
         self.prob_bars = self.ax_probs.bar(
@@ -118,16 +148,13 @@ class GUI:
         for bar in self.prob_bars:
             bar.set_animated(True)
 
-        self.ax_brain.set_title("source localization (dSPM on fsaverage)")
-        self.ax_brain.set_xticks([])
-        self.ax_brain.set_yticks([])
-        # Placeholder text shown until first render.
-        self.brain_status_text = self.ax_brain.text(
-            0.5, 0.5, self.brain_status,
-            transform=self.ax_brain.transAxes,
-            ha="center", va="center", fontsize=11, color="gray",
-        )
-        self.brain_img_artist = None  # created on first render
+        # Three topomap views — mne.viz.plot_topomap renders into these on each refresh.
+        self.topo_titles = {"top": "top view", "left": "left view", "back": "back view"}
+        for name, ax in self.topo_axes.items():
+            ax.set_title(self.topo_titles[name])
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect("equal")
 
         self.decision_text = self.fig.text(
             0.5, 0.99, "—", ha="center", va="top",
@@ -138,133 +165,49 @@ class GUI:
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ------------------------------------------------------------------ setup
+    # ------------------------------------------------------------ worker
 
-    def _start_source_setup_thread(self):
-        def setup():
-            try:
-                self._set_brain_status("fetching fsaverage…")
-                from mne.datasets import fetch_fsaverage
-                from mne.minimum_norm import make_inverse_operator
-
-                fs_dir = fetch_fsaverage(verbose=False)
-                subjects_dir = str(Path(fs_dir).parent)
-
-                self._set_brain_status("reading BEM…")
-                bem_path = Path(fs_dir) / "bem" / "fsaverage-5120-5120-5120-bem-sol.fif"
-                bem = mne.read_bem_solution(str(bem_path), verbose=False)
-
-                cache_dir = Path(fs_dir) / "mne_cache"
-                cache_dir.mkdir(exist_ok=True)
-                vol_src_path = cache_dir / "fsaverage-vol-10mm-src.fif"
-
-                if vol_src_path.exists():
-                    self._set_brain_status("loading source space…")
-                    src = mne.read_source_spaces(str(vol_src_path), verbose=False)
-                else:
-                    self._set_brain_status("computing volume source space (one-time, ~30s)…")
-                    src = mne.setup_volume_source_space(
-                        "fsaverage", pos=10.0, bem=bem,
-                        subjects_dir=subjects_dir, verbose=False,
-                    )
-                    mne.write_source_spaces(str(vol_src_path), src, overwrite=True, verbose=False)
-
-                montage = mne.channels.make_standard_montage("standard_1020")
-                info = mne.create_info(EEG_CHANNELS, sfreq=self.sfreq, ch_types="eeg")
-                info.set_montage(montage, on_missing="ignore")
-
-                fwd_path = cache_dir / f"fsaverage-{len(EEG_CHANNELS)}ch-vol-fwd.fif"
-                if fwd_path.exists():
-                    self._set_brain_status("loading forward solution…")
-                    fwd = mne.read_forward_solution(str(fwd_path), verbose=False)
-                else:
-                    self._set_brain_status("computing forward solution (one-time, ~30s)…")
-                    fwd = mne.make_forward_solution(
-                        info, trans="fsaverage", src=src, bem=bem,
-                        eeg=True, meg=False, verbose=False,
-                    )
-                    mne.write_forward_solution(str(fwd_path), fwd, overwrite=True, verbose=False)
-
-                self._set_brain_status("building inverse operator…")
-                cov = mne.make_ad_hoc_cov(info, verbose=False)
-                inv = make_inverse_operator(info, fwd, cov, loose=1.0, depth=0.8, verbose=False)
-
-                self.evoked_info = info
-                self.inv = inv
-                self.src = src
-                self.subject = "fsaverage"
-                self.subjects_dir = subjects_dir
-                self.source_ready = True
-
-                self._set_brain_status("ready — waiting for data…")
-                self._start_render_thread()
-            except Exception as e:
-                msg = f"source setup failed:\n{e}"
-                print(f"[gui] {msg}")
-                self._set_brain_status(msg)
-
-        threading.Thread(target=setup, daemon=True).start()
-
-    def _set_brain_status(self, msg):
-        self.brain_status = msg
-        # The status text is on the static background — flag a full redraw
-        # so the new message appears on next draw.
-        self._pending_bg_capture = True
-
-    # ------------------------------------------------------------------ render
-
-    def _start_render_thread(self):
-        from mne.minimum_norm import apply_inverse
-
-        def loop():
-            period = 1.0 / BRAIN_HZ
-            min_samples = int(0.25 * self.sfreq)
+    def _start_topo_thread(self):
+        """Just samples EEG values at TOPO_HZ; actual plot_topomap rendering
+        happens on the main thread because matplotlib isn't thread-safe."""
+        def worker():
+            period = 1.0 / TOPO_HZ
             while not self.stop_evt.is_set():
                 t0 = time.perf_counter()
                 try:
-                    with self.window_lock:
-                        win = None if self.latest_window is None else self.latest_window.copy()
-
-                    if win is not None and win.shape[1] >= min_samples:
-                        self._render_brain(win, apply_inverse)
+                    data = self.bci.get_data()
+                    eeg = data.get("eeg")
+                    if eeg is not None and len(eeg) > 0:
+                        n = min(len(eeg), len(EEG_CHANNELS))
+                        values = np.zeros(len(EEG_CHANNELS))
+                        values[:n] = eeg[:n]
+                        try:
+                            self.topo_queue.put_nowait(values)
+                        except queue.Full:
+                            try:
+                                self.topo_queue.get_nowait()
+                            except queue.Empty:
+                                pass
+                            try:
+                                self.topo_queue.put_nowait(values)
+                            except queue.Full:
+                                pass
                 except Exception as e:
-                    print(f"[gui] render error: {e}")
-
+                    print(f"[gui] topo worker error: {e}")
                 dt = time.perf_counter() - t0
                 rest = period - dt
                 if rest > 0:
                     time.sleep(rest)
 
-        threading.Thread(target=loop, daemon=True).start()
+        threading.Thread(target=worker, daemon=True).start()
 
-    def _render_brain(self, win, apply_inverse):
-        evoked = mne.EvokedArray(win, self.evoked_info, tmin=0.0, verbose=False)
-        evoked.set_eeg_reference("average", projection=True, verbose=False)
-        evoked.apply_proj(verbose=False)
-
-        stc = apply_inverse(
-            evoked, self.inv, lambda2=1.0 / 9.0, method="dSPM", verbose=False
-        )
-
-        fig = stc.plot(
-            src=self.src, subject=self.subject,
-            subjects_dir=self.subjects_dir,
-            mode="stat_map",
-            initial_time=stc.times[-1],
-            show=False, verbose=False,
-        )
-        fig.canvas.draw()
-        img = np.asarray(fig.canvas.buffer_rgba()).copy()
-        plt.close(fig)
-
-        with self.brain_lock:
-            self.latest_brain_img = img
-
-    # ------------------------------------------------------------------ draw
+    # ----------------------------------------------------------- draw events
 
     def _on_draw(self, _event):
+        # Topomap is part of the static background (re-rendered via plot_topomap
+        # on each refresh, then captured here).
         if self._pending_bg_capture or not self.bgs:
-            self.bgs[self.fig] = self.canvas.copy_from_bbox(self.fig.bbox)
+            self.bgs["fig"] = self.canvas.copy_from_bbox(self.fig.bbox)
             self._pending_bg_capture = False
             self._pred_dirty = True
 
@@ -272,8 +215,10 @@ class GUI:
         self._pending_bg_capture = True
         self.canvas.draw_idle()
 
+    # ----------------------------------------------------------- tick
+
     def _tick(self):
-        # Drain prediction events.
+        # 1. Prediction events.
         got_pred = False
         while True:
             try:
@@ -285,36 +230,30 @@ class GUI:
         if got_pred:
             self._pred_dirty = True
 
-        # Pick up the latest brain render (replaces previous, never queues).
-        new_brain = None
-        with self.brain_lock:
-            if self.latest_brain_img is not None:
-                new_brain = self.latest_brain_img
-                self.latest_brain_img = None
+        # 2. Latest EEG values for topomap. Re-render via mne.viz.plot_topomap.
+        latest = None
+        while True:
+            try:
+                latest = self.topo_queue.get_nowait()
+            except queue.Empty:
+                break
+        if latest is not None:
+            self._render_topomaps(latest)
+            # plot_topomap invalidates the background — force a full canvas
+            # redraw and recapture on the next draw_event.
+            self._pending_bg_capture = True
 
-        # Apply new brain image — this changes static art, so triggers a full
-        # canvas redraw (at most BRAIN_HZ, so the cost is fine).
-        if new_brain is not None:
-            self._apply_brain_image(new_brain)
-
-        # Also redraw the canvas fully whenever bg is invalidated (status text
-        # changes, brain image updates, resize).
-        if self._pending_bg_capture:
+        if not self.bgs or self._pending_bg_capture:
             self.canvas.draw_idle()
             self.root.after(TICK_MS, self._tick)
             return
 
-        if not self.bgs:
-            self.canvas.draw_idle()
-            self.root.after(TICK_MS, self._tick)
-            return
-
+        # Prediction-driven artists (conf lines, probs, decision text) → blit.
         if self._pred_dirty:
             self._refresh_conf_lines()
             self._refresh_probs()
             self._refresh_decision()
-
-            self.canvas.restore_region(self.bgs[self.fig])
+            self.canvas.restore_region(self.bgs["fig"])
             for line in self.conf_lines.values():
                 self.ax_conf.draw_artist(line)
             for bar in self.prob_bars:
@@ -325,29 +264,31 @@ class GUI:
 
         self.root.after(TICK_MS, self._tick)
 
-    def _apply_brain_image(self, img):
-        if self.brain_status_text is not None:
-            self.brain_status_text.set_visible(False)
-        h, w = img.shape[:2]
-        extent = (0, w, h, 0)  # origin='upper'
-        if self.brain_img_artist is None:
-            self.brain_img_artist = self.ax_brain.imshow(
-                img, aspect="equal", origin="upper", extent=extent,
-            )
-            self.ax_brain.set_anchor("C")  # center inside the axes box
+    def _render_topomaps(self, values):
+        # Common color limits across views for comparability.
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            lo, hi = float(finite.min()), float(finite.max())
+            if hi - lo < 1e-9:
+                hi = lo + 1e-9
         else:
-            existing = self.brain_img_artist.get_array()
-            if existing is not None and existing.shape == img.shape:
-                self.brain_img_artist.set_data(img)
-            else:
-                self.brain_img_artist.remove()
-                self.brain_img_artist = self.ax_brain.imshow(
-                    img, aspect="equal", origin="upper", extent=extent,
+            lo, hi = 0.0, 1.0
+
+        for name, ax in self.topo_axes.items():
+            v = self.views[name]
+            vals = values[v["visible"]]
+            ax.clear()
+            try:
+                mne.viz.plot_topomap(
+                    vals, v["positions"],
+                    axes=ax, show=False,
+                    cmap="viridis", vlim=(lo, hi),
+                    sensors=True, contours=0,
+                    outlines="head", extrapolate="head",
                 )
-                self.ax_brain.set_anchor("C")
-        self.ax_brain.set_xlim(0, w)
-        self.ax_brain.set_ylim(h, 0)
-        self._pending_bg_capture = True
+            except Exception as e:
+                print(f"[gui] plot_topomap error: {e}")
+            ax.set_title(self.topo_titles[name])
 
     def _consume_payload(self, payload):
         ts = payload["timestamp"]
@@ -387,7 +328,7 @@ class GUI:
             self.decision_text.set_text(f"class {self.latest_decision}")
             self.decision_text.set_color("tab:green" if self.latest_consensus else "gray")
 
-    # ------------------------------------------------------------------ exit
+    # ----------------------------------------------------------- shutdown
 
     def _on_close(self):
         self.stop_evt.set()
