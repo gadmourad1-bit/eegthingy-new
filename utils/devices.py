@@ -14,12 +14,12 @@ from serial.tools import list_ports
 
 # OpenBCI Cyton Daisy Board
 class OpenBCI:
-    DRAIN_INTERVAL = 1.0
-
-    def __init__(self):
+    def __init__(self, interval=1.0):
+        self.interval = interval
         self.board = None
         self.filter = None
         self.worker = 0
+        self.callback = None
 
         self.last_sample = {
             'eeg': np.zeros(16),
@@ -107,7 +107,7 @@ class OpenBCI:
             print("OpenBCI.start: already recording, restarting")
             self._recording = False
             if self._drain_thread is not None:
-                self._drain_thread.join(timeout=self.DRAIN_INTERVAL + 2.0)
+                self._drain_thread.join(timeout=self.interval + 2.0)
 
         self.worker += 1
         worker_id = self.worker
@@ -118,15 +118,20 @@ class OpenBCI:
 
         def drain_worker():
             while self._recording and self.worker == worker_id:
-                time.sleep(self.DRAIN_INTERVAL)
+                time.sleep(self.interval)
                 if self.board is not None and self._recording and self.worker == worker_id:
                     chunk = self.board.get_board_data()
                     if chunk.size:
                         self._chunks.append(chunk)
+                        if self.callback is not None:
+                            self.callback(chunk)
+
             if self.board is not None and self.worker == worker_id:
                 chunk = self.board.get_board_data()
                 if chunk.size:
                     self._chunks.append(chunk)
+                    if self.callback is not None:
+                        self.callback(chunk)
 
         self._drain_thread = threading.Thread(target=drain_worker, daemon=True)
         self._drain_thread.start()
@@ -140,7 +145,7 @@ class OpenBCI:
  
         self._recording = False
         if self._drain_thread is not None:
-            self._drain_thread.join(timeout=self.DRAIN_INTERVAL + 2.0)
+            self._drain_thread.join(timeout=self.interval + 2.0)
 
         self.last_sample['marker'] = 0
 
@@ -164,6 +169,9 @@ class OpenBCI:
     def insert_marker(self, value: float):
         if self.board is not None and value > 0:
             self.board.insert_marker(float(value))
+
+    def add_callback(self, callback):
+        self.callback = callback
  
     def get_data(self):
         if self.board is not None:
