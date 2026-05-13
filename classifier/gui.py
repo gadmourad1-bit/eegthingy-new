@@ -1,42 +1,31 @@
-import queue
-import threading
-import time
-import tkinter as tk
-from collections import deque
-
-import matplotlib
-matplotlib.use("TkAgg")
+import math
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
+import threading
+import time
+import tkinter as tk
+import queue
+
+from collections import deque
+from config import EEG_CHANNELS, GUI_HISTORY_S, GUI_REFRESH_RATE
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.patches import Circle, Ellipse, Polygon
 
-from config import EEG_CHANNELS
-
-HISTORY_SECONDS = 30
-TICK_MS = 16  # ~60Hz GUI tick
-TOPO_HZ = 5   # mne.viz.plot_topomap is slow (~150-300ms total for 3 views)
-FIG_DPI = 80
 
 class GUI:
-    """Live visualizer. Tkinter on main thread; topomap interpolation on
-    a worker thread; classification on the BrainFlow drain thread.
-
-    Three topographic views computed by projecting electrode positions:
-      top  : axial   (looking down)
-      left : sagittal-left
-      back : coronal (from behind, subject's left on viewer's left)
-    """
-
     def __init__(self, bci, smoother, class_labels, sfreq):
         self.bci = bci
         self.smoother = smoother
         self.class_labels = list(class_labels)
         self.sfreq = float(sfreq)
         self.queue = queue.Queue()
+        self.tick_ms = math.floor((1 / GUI_REFRESH_RATE) * 1000)
         smoother.subscribe(self.queue.put)
 
-        max_points = HISTORY_SECONDS * 20
+        max_points = GUI_HISTORY_S * 20
         self.t_hist = deque(maxlen=max_points)
         self.conf_hist = {c: deque(maxlen=max_points) for c in self.class_labels}
         self.t0 = None
@@ -44,24 +33,19 @@ class GUI:
         self.latest_probs = {c: 0.0 for c in self.class_labels}
         self.latest_decision = None
         self.latest_consensus = False
-
-        # Decision-onset transitions: list of (rel_t, decision) at every consensus change.
         self.transition_hist = deque(maxlen=max_points)
         self.last_decision = None
-        # Colors keyed by decision (consensus class).
         self.decision_colors = {}
         if len(self.class_labels) > 0:
             self.decision_colors[self.class_labels[0]] = "tab:blue"
         if len(self.class_labels) > 1:
             self.decision_colors[self.class_labels[1]] = "tab:red"
 
-        # Channel positions from standard_1020 montage → per-view 2D projections.
         montage = mne.channels.make_standard_montage("standard_1020")
         ch_pos = montage.get_positions()["ch_pos"]
-        pos3 = np.array([
-            ch_pos[name] if name in ch_pos else np.zeros(3)
-            for name in EEG_CHANNELS
-        ])
+        pos3 = np.array(
+            [ch_pos[name] if name in ch_pos else np.zeros(3) for name in EEG_CHANNELS]
+        )
         self.views = self._build_views(pos3)
 
         self.topo_queue = queue.Queue(maxsize=2)
@@ -82,16 +66,11 @@ class GUI:
         """Accepted but unused — kept for compatibility with start.py."""
         pass
 
-    # ----------------------------------------------------------------- views
-
     def _build_views(self, pos3):
-        # Rotation R takes head coords → "view space" where +z is the view's
-        # up/forward direction. After rotation, channels in the upper
-        # hemisphere (z>0) are visible from that view.
         rotations = {
-            "top":  np.eye(3, dtype=float),                                     # head as-is
-            "left": np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=float),  # -x → +z
-            "back": np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=float),  # -y → +z
+            "top": np.eye(3, dtype=float),
+            "left": np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=float),
+            "back": np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=float),
         }
         views = {}
         for name, R in rotations.items():
@@ -99,15 +78,18 @@ class GUI:
             norms = np.linalg.norm(rotated, axis=1, keepdims=True)
             norms = np.where(norms < 1e-9, 1.0, norms)
             unit = rotated / norms
-            # Azimuthal equidistant: theta = angle from +z, project to 2D disc.
             theta = np.arccos(np.clip(unit[:, 2], -1.0, 1.0))
             phi = np.arctan2(unit[:, 1], unit[:, 0])
             x2d = theta * np.cos(phi)
             y2d = theta * np.sin(phi)
             pos2d = np.column_stack([x2d, y2d])
-            visible = unit[:, 2] > -0.05  # upper hemisphere + a sliver of equator
+            visible = unit[:, 2] > -0.05
             pos_vis = pos2d[visible]
-            r = float(np.max(np.linalg.norm(pos_vis, axis=1))) * 1.10 if len(pos_vis) else np.pi / 2
+            r = (
+                float(np.max(np.linalg.norm(pos_vis, axis=1))) * 1.10
+                if len(pos_vis)
+                else np.pi / 2
+            )
             views[name] = {
                 "positions": pos_vis,
                 "visible": visible,
@@ -115,53 +97,68 @@ class GUI:
             }
         return views
 
-    # ----------------------------------------------------------------- build
-
     def _build_window(self):
         self.root = tk.Tk()
         self.root.title("EEG Live Viz")
-        self.root.geometry("1400x800")
+        win_w, win_h = 700, 400
+        self.root.update_idletasks()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.fig = plt.Figure(figsize=(14, 8), dpi=FIG_DPI, constrained_layout=True)
-        gs = self.fig.add_gridspec(2, 4, height_ratios=[1, 1], width_ratios=[1.2, 1, 1, 1])
+        self.fig = plt.Figure(figsize=(14, 8), constrained_layout=True)
+        gs = self.fig.add_gridspec(
+            2, 4, height_ratios=[1, 1], width_ratios=[1.2, 1, 1, 1]
+        )
         self.ax_conf = self.fig.add_subplot(gs[0, :])
         self.ax_probs = self.fig.add_subplot(gs[1, 0])
         self.topo_axes = {
-            "top":  self.fig.add_subplot(gs[1, 1]),
+            "top": self.fig.add_subplot(gs[1, 1]),
             "left": self.fig.add_subplot(gs[1, 2]),
             "back": self.fig.add_subplot(gs[1, 3]),
         }
 
-        # Confidence time series.
         self.ax_conf.set_title("confidence over time")
         self.ax_conf.set_xlabel("seconds")
         self.ax_conf.set_ylabel("p(class)")
         self.ax_conf.set_ylim(0, 1)
-        self.ax_conf.set_xlim(-HISTORY_SECONDS, 0)
+        self.ax_conf.set_xlim(-GUI_HISTORY_S, 0)
         self.ax_conf.axhline(0.5, color="gray", lw=0.5, ls="--")
 
         colors = ["tab:blue", "tab:red", "tab:green", "tab:orange"]
         self.conf_lines = {}
         for i, c in enumerate(self.class_labels):
             (line,) = self.ax_conf.plot(
-                [], [], color=colors[i % len(colors)], lw=1.5,
-                label=f"class {c}", animated=True,
+                [],
+                [],
+                color=colors[i % len(colors)],
+                lw=1.5,
+                label=f"class {c}",
+                animated=True,
             )
             self.conf_lines[c] = line
         self.ax_conf.legend(loc="upper right")
 
-        # Vertical onset markers — one LineCollection per class, segments updated each refresh.
         from matplotlib.collections import LineCollection
+
         self.onset_collections = {}
         for c in self.class_labels:
             color = self.decision_colors.get(c, "gray")
-            lc = LineCollection([], colors=color, alpha=0.7, lw=1.2,
-                                linestyles="dashed", animated=True, zorder=1)
+            lc = LineCollection(
+                [],
+                colors=color,
+                alpha=0.7,
+                lw=1.2,
+                linestyles="dashed",
+                animated=True,
+                zorder=1,
+            )
             self.ax_conf.add_collection(lc)
             self.onset_collections[c] = lc
 
-        # Probability bars.
         self.ax_probs.set_title("current probs")
         self.ax_probs.set_ylim(0, 1)
         self.prob_bars = self.ax_probs.bar(
@@ -172,30 +169,50 @@ class GUI:
         for bar in self.prob_bars:
             bar.set_animated(True)
 
-        # Three topomap views — mne.viz.plot_topomap renders into these on each refresh.
         self.topo_titles = {"top": "top view", "left": "side view", "back": "back view"}
+        self.topo_imgs = {}
         for name, ax in self.topo_axes.items():
             ax.set_title(self.topo_titles[name])
             ax.set_xticks([])
             ax.set_yticks([])
             ax.set_aspect("equal")
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            placeholder = np.ones((4, 4, 4), dtype=np.uint8) * 255
+            self.topo_imgs[name] = ax.imshow(placeholder, animated=True, aspect="equal")
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+
+        self.off_figs = {}
+        for name in self.topo_axes:
+            fig = Figure(figsize=(3.2, 3.4), constrained_layout=True)
+            canvas = FigureCanvasAgg(fig)
+            ax = fig.add_subplot()
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            self.off_figs[name] = (fig, canvas, ax)
 
         self.decision_text = self.fig.text(
-            0.5, 0.94, "—", ha="center", va="top",
-            fontsize=24, fontweight="bold", color="gray",
+            0.5,
+            0.94,
+            "—",
+            ha="center",
+            va="top",
+            fontsize=24,
+            fontweight="bold",
+            color="gray",
             animated=True,
         )
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ------------------------------------------------------------ worker
-
     def _start_topo_thread(self):
-        """Just samples EEG values at TOPO_HZ; actual plot_topomap rendering
-        happens on the main thread because matplotlib isn't thread-safe."""
         def worker():
-            period = 1.0 / TOPO_HZ
+            period = 1.0 / (GUI_REFRESH_RATE)
             while not self.stop_evt.is_set():
                 t0 = time.perf_counter()
                 try:
@@ -205,17 +222,19 @@ class GUI:
                         n = min(len(eeg), len(EEG_CHANNELS))
                         values = np.zeros(len(EEG_CHANNELS))
                         values[:n] = eeg[:n]
-                        try:
-                            self.topo_queue.put_nowait(values)
-                        except queue.Full:
+                        imgs = self._render_offscreen(values)
+                        if imgs is not None:
                             try:
-                                self.topo_queue.get_nowait()
-                            except queue.Empty:
-                                pass
-                            try:
-                                self.topo_queue.put_nowait(values)
+                                self.topo_queue.put_nowait(imgs)
                             except queue.Full:
-                                pass
+                                try:
+                                    self.topo_queue.get_nowait()
+                                except queue.Empty:
+                                    pass
+                                try:
+                                    self.topo_queue.put_nowait(imgs)
+                                except queue.Full:
+                                    pass
                 except Exception as e:
                     print(f"[gui] topo worker error: {e}")
                 dt = time.perf_counter() - t0
@@ -225,24 +244,74 @@ class GUI:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ----------------------------------------------------------- draw events
+    def _render_offscreen(self, values):
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            lo, hi = float(finite.min()), float(finite.max())
+            if hi - lo < 1e-9:
+                hi = lo + 1e-9
+        else:
+            lo, hi = 0.0, 1.0
+
+        out = {}
+        for name, (_fig, canvas, ax) in self.off_figs.items():
+            v = self.views[name]
+            vals = values[v["visible"]]
+            ax.clear()
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            try:
+                mne.viz.plot_topomap(
+                    vals,
+                    v["positions"],
+                    axes=ax,
+                    show=False,
+                    cmap="viridis",
+                    vlim=(lo, hi),
+                    sensors=True,
+                    contours=0,
+                    outlines="head",
+                    extrapolate="head",
+                    sphere=(0.0, 0.0, 0.0, v["r"]),
+                )
+                for ln in list(ax.lines):
+                    ln.remove()
+            except Exception as e:
+                print(f"[gui] plot_topomap error: {e}")
+                continue
+            marks = self.HEAD_MARKS[name]
+            self._draw_head_marks(ax, v["r"], marks["nose_deg"], marks["ear_degs"])
+            lim = v["r"] * 1.2
+            ax.set_xlim(-lim, lim)
+            ax.set_ylim(-lim, lim)
+
+            canvas.draw()
+            w, h = canvas.get_width_height()
+            buf = (
+                np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
+                .reshape(h, w, 4)
+                .copy()
+            )
+            out[name] = buf
+        return out
 
     def _on_draw(self, _event):
-        # Topomap is part of the static background (re-rendered via plot_topomap
-        # on each refresh, then captured here).
         if self._pending_bg_capture or not self.bgs:
+            for name, ax in self.topo_axes.items():
+                self.bgs[name] = self.canvas.copy_from_bbox(ax.bbox)
             self.bgs["fig"] = self.canvas.copy_from_bbox(self.fig.bbox)
             self._pending_bg_capture = False
             self._pred_dirty = True
+            self._topo_dirty = True
 
     def _on_resize(self, _event):
         self._pending_bg_capture = True
         self.canvas.draw_idle()
 
-    # ----------------------------------------------------------- tick
-
     def _tick(self):
-        # 1. Prediction events.
         got_pred = False
         while True:
             try:
@@ -254,7 +323,6 @@ class GUI:
         if got_pred:
             self._pred_dirty = True
 
-        # 2. Latest EEG values for topomap. Re-render via mne.viz.plot_topomap.
         latest = None
         while True:
             try:
@@ -262,17 +330,21 @@ class GUI:
             except queue.Empty:
                 break
         if latest is not None:
-            self._render_topomaps(latest)
-            # plot_topomap invalidates the background — force a full canvas
-            # redraw and recapture on the next draw_event.
-            self._pending_bg_capture = True
+            for name, img_arr in latest.items():
+                topo = self.topo_imgs[name]
+                cur = topo.get_array()
+                if cur is None or cur.shape != img_arr.shape:
+                    topo.set_extent((-1, 1, -1, 1))
+                    topo.axes.set_xlim(-1, 1)
+                    topo.axes.set_ylim(-1, 1)
+                topo.set_data(img_arr)
+            self._topo_dirty = True
 
         if not self.bgs or self._pending_bg_capture:
             self.canvas.draw_idle()
-            self.root.after(TICK_MS, self._tick)
+            self.root.after(self.tick_ms, self._tick)
             return
 
-        # Prediction-driven artists (onset markers, conf lines, probs, decision text) → blit.
         if self._pred_dirty:
             self._refresh_onsets()
             self._refresh_conf_lines()
@@ -285,96 +357,63 @@ class GUI:
                 self.ax_conf.draw_artist(line)
             for bar in self.prob_bars:
                 self.ax_probs.draw_artist(bar)
+            for img in self.topo_imgs.values():
+                img.axes.draw_artist(img)
             self.fig.draw_artist(self.decision_text)
             self.canvas.blit(self.fig.bbox)
             self._pred_dirty = False
+            self._topo_dirty = False
+        elif self._topo_dirty:
+            for name, img in self.topo_imgs.items():
+                self.canvas.restore_region(self.bgs[name])
+                img.axes.draw_artist(img)
+                self.canvas.blit(img.axes.bbox)
+            self._topo_dirty = False
 
-        self.root.after(TICK_MS, self._tick)
+        self.root.after(self.tick_ms, self._tick)
 
-    # Anatomical orientation markers per view:
-    #   top:  nose at top (+y, anterior), ears at left/right
-    #   left: nose at right (+x = anterior in this projection)
-    #   back: ears at left/right (no nose — face is away from viewer)
     HEAD_MARKS = {
-        "top":  {"nose_deg": 90, "ear_degs": (0, 180)},
-        "left": {"nose_deg": 0,  "ear_degs": ()},
+        "top": {"nose_deg": 90, "ear_degs": (0, 180)},
+        "left": {"nose_deg": 0, "ear_degs": ()},
         "back": {"nose_deg": None, "ear_degs": (0, 180)},
     }
 
     def _draw_head_marks(self, ax, r, nose_deg, ear_degs):
-        import math
-        from matplotlib.patches import Ellipse, Polygon
-        # Head circle — also used as clip path for the imshow heatmap so it
-        # doesn't bleed past the head outline.
-        head = plt.Circle((0, 0), r, color="k", fill=False, lw=1.2)
+        head = Circle((0, 0), r, color="k", fill=False, lw=1.2)
         ax.add_patch(head)
         for art in list(ax.images) + list(ax.collections):
             try:
                 art.set_clip_path(head)
             except Exception:
                 pass
-        # Nose: small triangle on the perimeter.
+
         if nose_deg is not None:
             a = math.radians(nose_deg)
             half = math.radians(11)
             base_l = (r * math.cos(a + half), r * math.sin(a + half))
             base_r = (r * math.cos(a - half), r * math.sin(a - half))
             tip = (r * 1.10 * math.cos(a), r * 1.10 * math.sin(a))
-            ax.add_patch(Polygon([base_l, tip, base_r], closed=True,
-                                 fill=False, color="k", lw=1.2))
-        # Ears: small tangential ellipses.
+            ax.add_patch(
+                Polygon(
+                    [base_l, tip, base_r], closed=True, fill=False, color="k", lw=1.2
+                )
+            )
+
         for ang in ear_degs:
             a = math.radians(ang)
             cx = r * 1.045 * math.cos(a)
             cy = r * 1.045 * math.sin(a)
-            ax.add_patch(Ellipse((cx, cy), width=0.10 * r, height=0.20 * r,
-                                 angle=ang, fill=False, color="k", lw=1.2))
-
-    def _render_topomaps(self, values):
-        # Common color limits across views for comparability.
-        finite = values[np.isfinite(values)]
-        if finite.size:
-            lo, hi = float(finite.min()), float(finite.max())
-            if hi - lo < 1e-9:
-                hi = lo + 1e-9
-        else:
-            lo, hi = 0.0, 1.0
-
-        for name, ax in self.topo_axes.items():
-            v = self.views[name]
-            vals = values[v["visible"]]
-            ax.clear()
-            prev_lines = []
-            try:
-                # outlines='head' makes MNE compute the head boundary, size the
-                # heatmap to it, and clip — we just remove its head/nose/ears
-                # afterward and draw our own per-view markers. sphere pins the
-                # head radius to our chosen value.
-                mne.viz.plot_topomap(
-                    vals, v["positions"],
-                    axes=ax, show=False,
-                    cmap="viridis", vlim=(lo, hi),
-                    sensors=True, contours=0,
-                    outlines="head", extrapolate="head",
-                    sphere=(0.0, 0.0, 0.0, v["r"]),
+            ax.add_patch(
+                Ellipse(
+                    (cx, cy),
+                    width=0.10 * r,
+                    height=0.20 * r,
+                    angle=ang,
+                    fill=False,
+                    color="k",
+                    lw=1.2,
                 )
-                # Remove MNE's auto-drawn head/nose/ears (they're Line2D objects).
-                for ln in list(ax.lines):
-                    if ln not in prev_lines:
-                        ln.remove()
-            except Exception as e:
-                print(f"[gui] plot_topomap error: {e}")
-            # Our own head outline + nose/ears.
-            marks = self.HEAD_MARKS[name]
-            self._draw_head_marks(ax, v["r"], marks["nose_deg"], marks["ear_degs"])
-            # Reserve room for the tip of the nose / ears.
-            lim = v["r"] * 1.2
-            ax.set_xlim(-lim, lim)
-            ax.set_ylim(-lim, lim)
-            ax.set_aspect("equal")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_title(self.topo_titles[name])
+            )
 
     def _consume_payload(self, payload):
         ts = payload["timestamp"]
@@ -394,7 +433,6 @@ class GUI:
         self.latest_decision = smoothed["decision"]
         self.latest_consensus = smoothed["consensus"]
 
-        # Record onset: transition into a new consensus class.
         new_d = smoothed["decision"] if smoothed["consensus"] else None
         if new_d != self.last_decision:
             if new_d is not None:
@@ -410,8 +448,6 @@ class GUI:
             line.set_data(ts, np.fromiter(self.conf_hist[c], dtype=float))
 
     def _refresh_onsets(self):
-        # For each class, set the LineCollection segments to vertical lines at
-        # each transition into that class within the visible window.
         if not self.t_hist:
             for lc in self.onset_collections.values():
                 lc.set_segments([])
@@ -420,7 +456,7 @@ class GUI:
         per_class = {c: [] for c in self.class_labels}
         for rel_t, d in self.transition_hist:
             x = rel_t - now
-            if x < -HISTORY_SECONDS or x > 0:
+            if x < -GUI_HISTORY_S or x > 0:
                 continue
             if d in per_class:
                 per_class[d].append([(x, 0.0), (x, 1.0)])
@@ -437,9 +473,9 @@ class GUI:
             self.decision_text.set_color("gray")
         else:
             self.decision_text.set_text(f"class {self.latest_decision}")
-            self.decision_text.set_color("tab:green" if self.latest_consensus else "gray")
-
-    # ----------------------------------------------------------- shutdown
+            self.decision_text.set_color(
+                "tab:green" if self.latest_consensus else "gray"
+            )
 
     def _on_close(self):
         self.stop_evt.set()

@@ -8,6 +8,8 @@ FILTER_KWARGS = dict(
     l_trans_bandwidth=2.0, h_trans_bandwidth=3.0,
     method='fir', phase='minimum', fir_design='firwin',
 )
+GUI_HISTORY_S = 30
+GUI_REFRESH_RATE = 60
 SMOOTHER_N = 3
 SMOOTHER_M = 2
 SMOOTHER_CONF_FLOOR = 0.60
