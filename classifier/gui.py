@@ -106,9 +106,12 @@ class GUI:
             y2d = theta * np.sin(phi)
             pos2d = np.column_stack([x2d, y2d])
             visible = unit[:, 2] > -0.05  # upper hemisphere + a sliver of equator
+            pos_vis = pos2d[visible]
+            r = float(np.max(np.linalg.norm(pos_vis, axis=1))) * 1.10 if len(pos_vis) else np.pi / 2
             views[name] = {
-                "positions": pos2d[visible],
+                "positions": pos_vis,
                 "visible": visible,
+                "r": r,
             }
         return views
 
@@ -170,7 +173,7 @@ class GUI:
             bar.set_animated(True)
 
         # Three topomap views — mne.viz.plot_topomap renders into these on each refresh.
-        self.topo_titles = {"top": "top view", "left": "left view", "back": "back view"}
+        self.topo_titles = {"top": "top view", "left": "side view", "back": "back view"}
         for name, ax in self.topo_axes.items():
             ax.set_title(self.topo_titles[name])
             ax.set_xticks([])
@@ -178,7 +181,7 @@ class GUI:
             ax.set_aspect("equal")
 
         self.decision_text = self.fig.text(
-            0.5, 0.99, "—", ha="center", va="top",
+            0.5, 0.94, "—", ha="center", va="top",
             fontsize=24, fontweight="bold", color="gray",
             animated=True,
         )
@@ -288,6 +291,45 @@ class GUI:
 
         self.root.after(TICK_MS, self._tick)
 
+    # Anatomical orientation markers per view:
+    #   top:  nose at top (+y, anterior), ears at left/right
+    #   left: nose at right (+x = anterior in this projection)
+    #   back: ears at left/right (no nose — face is away from viewer)
+    HEAD_MARKS = {
+        "top":  {"nose_deg": 90, "ear_degs": (0, 180)},
+        "left": {"nose_deg": 0,  "ear_degs": ()},
+        "back": {"nose_deg": None, "ear_degs": (0, 180)},
+    }
+
+    def _draw_head_marks(self, ax, r, nose_deg, ear_degs):
+        import math
+        from matplotlib.patches import Ellipse, Polygon
+        # Head circle — also used as clip path for the imshow heatmap so it
+        # doesn't bleed past the head outline.
+        head = plt.Circle((0, 0), r, color="k", fill=False, lw=1.2)
+        ax.add_patch(head)
+        for art in list(ax.images) + list(ax.collections):
+            try:
+                art.set_clip_path(head)
+            except Exception:
+                pass
+        # Nose: small triangle on the perimeter.
+        if nose_deg is not None:
+            a = math.radians(nose_deg)
+            half = math.radians(11)
+            base_l = (r * math.cos(a + half), r * math.sin(a + half))
+            base_r = (r * math.cos(a - half), r * math.sin(a - half))
+            tip = (r * 1.10 * math.cos(a), r * 1.10 * math.sin(a))
+            ax.add_patch(Polygon([base_l, tip, base_r], closed=True,
+                                 fill=False, color="k", lw=1.2))
+        # Ears: small tangential ellipses.
+        for ang in ear_degs:
+            a = math.radians(ang)
+            cx = r * 1.045 * math.cos(a)
+            cy = r * 1.045 * math.sin(a)
+            ax.add_patch(Ellipse((cx, cy), width=0.10 * r, height=0.20 * r,
+                                 angle=ang, fill=False, color="k", lw=1.2))
+
     def _render_topomaps(self, values):
         # Common color limits across views for comparability.
         finite = values[np.isfinite(values)]
@@ -302,16 +344,36 @@ class GUI:
             v = self.views[name]
             vals = values[v["visible"]]
             ax.clear()
+            prev_lines = []
             try:
+                # outlines='head' makes MNE compute the head boundary, size the
+                # heatmap to it, and clip — we just remove its head/nose/ears
+                # afterward and draw our own per-view markers. sphere pins the
+                # head radius to our chosen value.
                 mne.viz.plot_topomap(
                     vals, v["positions"],
                     axes=ax, show=False,
                     cmap="viridis", vlim=(lo, hi),
                     sensors=True, contours=0,
                     outlines="head", extrapolate="head",
+                    sphere=(0.0, 0.0, 0.0, v["r"]),
                 )
+                # Remove MNE's auto-drawn head/nose/ears (they're Line2D objects).
+                for ln in list(ax.lines):
+                    if ln not in prev_lines:
+                        ln.remove()
             except Exception as e:
                 print(f"[gui] plot_topomap error: {e}")
+            # Our own head outline + nose/ears.
+            marks = self.HEAD_MARKS[name]
+            self._draw_head_marks(ax, v["r"], marks["nose_deg"], marks["ear_degs"])
+            # Reserve room for the tip of the nose / ears.
+            lim = v["r"] * 1.2
+            ax.set_xlim(-lim, lim)
+            ax.set_ylim(-lim, lim)
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
             ax.set_title(self.topo_titles[name])
 
     def _consume_payload(self, payload):

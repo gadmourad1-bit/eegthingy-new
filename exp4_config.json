@@ -1,0 +1,11 @@
+{
+    "id": 1,
+    "run": 1,
+    "cues": 10,
+    "time_prep": 10,
+    "time_plan": 2,
+    "time_task": 2,
+    "time_rest": 2,
+    "time_buffer": 0.1,
+    "run_type": "Training"
+}

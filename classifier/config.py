@@ -11,6 +11,9 @@ FILTER_KWARGS = dict(
 SMOOTHER_N = 3
 SMOOTHER_M = 2
 SMOOTHER_CONF_FLOOR = 0.60
-TARGET_MAPPINGS = {'21': 1, '22': 2}
+TARGET_MAPPINGS = {
+    'left_hand/task':  1,
+    'right_hand/task': 2,
+}
 WS_HOST = '0.0.0.0'
 WS_PORT = 8765

@@ -23,6 +23,21 @@ from gui import GUI
 def bandpass(data, sfreq):
     return mne.filter.filter_data(data, sfreq=sfreq, verbose=False, **FILTER_KWARGS)
 
+def build_event_id(raw, target_id_dict):
+    """Expand prefix-based target mappings to the exact annotation descriptions
+    present in this raw file. Each annotation is assigned the code of the first
+    target whose key matches it (exact or hierarchical prefix with '/')."""
+    event_id = {}
+    for desc in set(raw.annotations.description):
+        d = str(desc).strip().lower()
+        for prefix, code in target_id_dict.items():
+            p = prefix.lower()
+            if d == p or d.startswith(p + '/'):
+                event_id[str(desc)] = code
+                break
+    return event_id
+
+
 def process_data(file_name, target_id_dict):
     print(f"\n--- Loading: {file_name} ---")
     raw = mne.io.read_raw_fif(file_name, preload=True)
@@ -32,8 +47,15 @@ def process_data(file_name, target_id_dict):
 
     raw.filter(**FILTER_KWARGS)
 
-    events, event_id = mne.events_from_annotations(raw, event_id=target_id_dict)
-    epochs = mne.Epochs(raw, events, event_id=event_id,
+    event_id = build_event_id(raw, target_id_dict)
+    if not event_id:
+        raise ValueError(
+            f"No annotations in {file_name} matched any prefix in {target_id_dict}. "
+            f"Annotations present: {sorted(set(raw.annotations.description))[:5]}…"
+        )
+
+    events, event_id_used = mne.events_from_annotations(raw, event_id=event_id)
+    epochs = mne.Epochs(raw, events, event_id=event_id_used,
                         tmin=EPOCH_TMIN, tmax=EPOCH_TMAX, baseline=None,
                         preload=True, proj=False, on_missing='warn')
 
