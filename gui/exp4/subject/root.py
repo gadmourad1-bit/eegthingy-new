@@ -1,7 +1,8 @@
+import json
 import random
 import time
-import json
 
+from config import DATA_DIR
 from tkinter import *
 from utils.stream import Stream
 from gui.exp4.config import Config
@@ -51,11 +52,11 @@ class SubjectInterface(Toplevel):
             random.shuffle(self.levels)
 
         self.images = [
-            PhotoImage(file="./gui/exp4/resources/resting.png"),                 # Resting (0)
-            PhotoImage(file="./gui/exp4/resources/left_hand_clench.png"),        # Left hand clench (1)
-            PhotoImage(file="./gui/exp4/resources/right_hand_clench.png"),       # Right hand clench (2)
-            PhotoImage(file="./gui/exp4/resources/left_foot_plantar.png"),       # Left foot plantar flexion (3)
-            PhotoImage(file="./gui/exp4/resources/right_foot_plantar.png")       # Right foot plantar flexion (4)
+            PhotoImage(file="./gui/exp4/resources/resting.png"),
+            PhotoImage(file="./gui/exp4/resources/left_hand_clench.png"),
+            PhotoImage(file="./gui/exp4/resources/right_hand_clench.png"),
+            PhotoImage(file="./gui/exp4/resources/left_foot_plantar.png"),
+            PhotoImage(file="./gui/exp4/resources/right_foot_plantar.png")
         ]
 
         self.targets = [
@@ -104,7 +105,7 @@ class SubjectInterface(Toplevel):
             if self.subject.run_type != "Demo":
                 self.stream.stop()
                 self.stream.save(
-                    f"./data/exp4_subject{self.subject.id}_{self.subject.run_type.lower()}_{self.subject.run}_mi_raw.fif",
+                    f"{DATA_DIR}/exp4_subject{self.subject.id}_{self.subject.run_type.lower()}_{self.subject.run}_mi_raw.fif",
                     params=json.dumps(self.subject.__dict__))
 
             self.running = False
