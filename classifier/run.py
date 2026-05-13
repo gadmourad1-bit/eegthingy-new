@@ -12,6 +12,7 @@ from brainflow.board_shim import BoardShim
 from config import DATA_DIR, DELTA_T, EEG_CHANNELS_TARGETS, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis 
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score
 from utils.devices import OpenBCI
@@ -67,7 +68,7 @@ def discover_files():
 def build_pipeline():
     return Pipeline([
         ('CSP', CSP(n_components=4, reg=None, log=True, norm_trace=False)),
-        ('Classifier', LogisticRegression()),
+        ('Classifier', LinearDiscriminantAnalysis()),
     ])
 
 def parse_indices(raw, n):

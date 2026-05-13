@@ -80,8 +80,8 @@ class Smoother:
     def _vote(self, snapshot):
         votes = Counter(e["vote"] for e in snapshot if e["vote"] is not None)
         if not votes:
-            return None, False, {}
+            return 0, False, {}
         winner, count = votes.most_common(1)[0]
         if count >= self.m:
             return winner, True, dict(votes)
-        return None, False, dict(votes)
+        return 0, False, dict(votes)

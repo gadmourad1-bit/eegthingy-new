@@ -1,5 +1,5 @@
 DATA_DIR = './data'
-DELTA_T=0.25
+DELTA_T=0.6
 EEG_CHANNELS_MAPPING = [
     'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',  # Cyton ch 1-8  (ch8 unplugged)
     'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',    # Daisy  ch 9-16
@@ -21,7 +21,7 @@ LABELS = {1: "left_hand", 2: "right_hand", 3: "left_foot", 4: "right_foot"}
 PHASES = {1: "prep", 2: "plan", 3: "task", 4: "rest"}
 SMOOTHER_N = 3
 SMOOTHER_M = 2
-SMOOTHER_CONF_FLOOR = 0.60
+SMOOTHER_CONF_FLOOR = 0.85
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,
