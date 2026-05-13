@@ -5,12 +5,11 @@ import numpy as np
 import os
 import sys
 import threading
-import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from brainflow.board_shim import BoardShim
-from config import DATA_DIR, DELTA_T, EEG_CHANNELS, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
+from config import DATA_DIR, DELTA_T, EEG_CHANNELS_TARGETS, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
@@ -41,7 +40,7 @@ def build_event_id(raw, target_id_dict):
 def process_data(file_name, target_id_dict):
     print(f"\n--- Loading: {file_name} ---")
     raw = mne.io.read_raw_fif(file_name, preload=True)
-    raw.pick(EEG_CHANNELS)
+    raw.pick(EEG_CHANNELS_TARGETS)
     raw.set_montage('standard_1020', on_missing='ignore')
     raw.annotations.description = np.array([str(d).strip().lower() for d in raw.annotations.description])
 
@@ -182,16 +181,13 @@ def run_online():
     clf.fit(X_train, y_train)
     print(f"\nTrained on {len(X_train)} epochs across {n_channels} channels x {n_times} samples.")
 
-    # The OpenBCI chunk delivers the same channel layout as the raw .fif
-    # (before process_data picks EEG_CHANNELS). Look up the indices of the
-    # training channels in that full ordering and use them to slice the chunk.
     raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
     full_names = raw_full.ch_names
     train_sfreq = float(raw_full.info['sfreq'])
     try:
-        train_idx = [full_names.index(name) for name in EEG_CHANNELS]
+        train_idx = [full_names.index(name) for name in EEG_CHANNELS_TARGETS]
     except ValueError as e:
-        print(f"channel mismatch between training data and EEG_CHANNELS: {e}")
+        print(f"channel mismatch between training data and EEG_CHANNELS_TARGETS: {e}")
         return
 
     ws = WebSocket()
@@ -210,8 +206,6 @@ def run_online():
               "predictions may degrade")
 
     window_n = int(round(DELTA_T * sfreq))
-    # Past context for the minimum-phase FIR (~filter length ≈ 413 samples at
-    # 250Hz with our transition bandwidths). 2s is comfortably above that.
     context_n = int(round(2.0 * sfreq))
     buffer_n = window_n + context_n
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
@@ -219,7 +213,6 @@ def run_online():
 
     print(f"window: {DELTA_T}s ({window_n} samples), buffer: {buffer_n} samples")
 
-    # Create the GUI before BCI starts streaming so push_window has a target.
     gui = GUI(bci, smoother, clf.classes_, sfreq)
 
     def on_chunk(chunk):
@@ -238,11 +231,9 @@ def run_online():
             if buffer.shape[1] > buffer_n:
                 buffer = buffer[:, -buffer_n:]
             if buffer.shape[1] < buffer_n:
-                return  # priming the filter context
+                return
             buf = buffer.copy()
 
-        # Filter the full buffer (matches raw.filter on a continuous signal),
-        # then take only the last DELTA_T worth of samples for prediction.
         filtered = bandpass(buf, sfreq)
         window = filtered[:, -window_n:][np.newaxis, :, :]
         gui.push_window(filtered[:, -window_n:])
@@ -264,7 +255,6 @@ def run_online():
     bci.callback = on_chunk
     bci.start()
 
-    print("\nLive classification — close the GUI window or Ctrl+C to stop.\n")
     try:
         gui.mainloop()
     except KeyboardInterrupt:
@@ -275,8 +265,6 @@ def run_online():
         ws.stop()
 
 def menu():
-    print("=" * 35)
-    print(" EEG Motor Imagery Classifier")
     print("=" * 35)
     print(" 1) Offline  (pick training/testing files)")
     print(" 2) Online   (train on all files, classify live)")

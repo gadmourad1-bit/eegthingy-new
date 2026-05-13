@@ -38,7 +38,6 @@ class Smoother:
         confidence: max prob (0..1)
         probs: dict {class_label: prob}
         """
-        # Pre-vote gate: abstain if not confident enough.
         vote = int(prediction) if confidence >= self.conf_floor else None
 
         entry = {

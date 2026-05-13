@@ -1,5 +1,4 @@
 import math
-import matplotlib.pyplot as plt
 import mne
 import numpy as np
 import threading
@@ -8,7 +7,7 @@ import tkinter as tk
 import queue
 
 from collections import deque
-from config import EEG_CHANNELS, GUI_HISTORY_S, GUI_REFRESH_RATE
+from config import EEG_CHANNELS_TARGETS, GUI_HISTORY_S, GUI_REFRESH_RATE
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
@@ -44,7 +43,7 @@ class GUI:
         montage = mne.channels.make_standard_montage("standard_1020")
         ch_pos = montage.get_positions()["ch_pos"]
         pos3 = np.array(
-            [ch_pos[name] if name in ch_pos else np.zeros(3) for name in EEG_CHANNELS]
+            [ch_pos[name] if name in ch_pos else np.zeros(3) for name in EEG_CHANNELS_TARGETS]
         )
         self.views = self._build_views(pos3)
 
@@ -99,7 +98,7 @@ class GUI:
 
     def _build_window(self):
         self.root = tk.Tk()
-        self.root.title("EEG Live Viz")
+        self.root.title("EEG Classifier Visualizer")
         win_w, win_h = 700, 400
         self.root.update_idletasks()
         screen_w = self.root.winfo_screenwidth()
@@ -109,7 +108,7 @@ class GUI:
         self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.fig = plt.Figure(figsize=(14, 8), constrained_layout=True)
+        self.fig = Figure(figsize=(14, 8), constrained_layout=True)
         gs = self.fig.add_gridspec(
             2, 4, height_ratios=[1, 1], width_ratios=[1.2, 1, 1, 1]
         )
@@ -219,8 +218,8 @@ class GUI:
                     data = self.bci.get_data()
                     eeg = data.get("eeg")
                     if eeg is not None and len(eeg) > 0:
-                        n = min(len(eeg), len(EEG_CHANNELS))
-                        values = np.zeros(len(EEG_CHANNELS))
+                        n = min(len(eeg), len(EEG_CHANNELS_TARGETS))
+                        values = np.zeros(len(EEG_CHANNELS_TARGETS))
                         values[:n] = eeg[:n]
                         imgs = self._render_offscreen(values)
                         if imgs is not None:
