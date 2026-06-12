@@ -9,12 +9,13 @@ import threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from brainflow.board_shim import BoardShim
-from config import DATA_DIR, DELTA_T, EEG_CHANNELS_TARGETS, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
+from config import DATA_DIR, DELTA_T, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis 
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.metrics import accuracy_score, confusion_matrix
 from utils.devices import OpenBCI
 from ws import WebSocket
 from smoother import Smoother
@@ -57,7 +58,8 @@ def process_data(file_name, target_id_dict):
     events, event_id_used = mne.events_from_annotations(raw, event_id=event_id)
     epochs = mne.Epochs(raw, events, event_id=event_id_used,
                         tmin=EPOCH_TMIN, tmax=EPOCH_TMAX, baseline=None,
-                        preload=True, proj=False, on_missing='warn')
+                        preload=True, proj=False, on_missing='warn',
+                        reject=EPOCH_REJECT)
 
     print(f"Successfully created {len(epochs)} epochs for classes: {epochs.event_id}")
     return epochs
@@ -67,7 +69,7 @@ def discover_files():
 
 def build_pipeline():
     return Pipeline([
-        ('CSP', CSP(n_components=4, reg=None, log=True, norm_trace=False)),
+        ('CSP', CSP(n_components=4, reg='ledoit_wolf', log=True, norm_trace=False)),
         ('Classifier', LinearDiscriminantAnalysis()),
     ])
 
@@ -140,13 +142,24 @@ def run_offline():
     y_test = epochs_test.events[:, -1]
 
     clf = build_pipeline()
-    clf.fit(X_train, y_train)
 
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
+    cv_scores = cross_val_score(build_pipeline(), X_train, y_train, cv=cv)
+    print(f"\n5-fold CV on training pool: "
+          f"{cv_scores.mean() * 100:.2f}% +/- {cv_scores.std() * 100:.2f}%")
+
+    clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
-    print("Y_TEST:", y_test)
-    print("Y_PRED:", y_pred)
+    labels = list(clf.classes_)
+    cm = confusion_matrix(y_test, y_pred, labels=labels)
+    print("\nConfusion matrix (rows=true, cols=pred):")
+    header = "        " + "".join(f"{c:>8}" for c in labels)
+    print(header)
+    for c, row in zip(labels, cm):
+        print(f"{c:>8}" + "".join(f"{v:>8}" for v in row))
+
     print("\n" + "=" * 35)
     print(f"Motor Imagery Test Accuracy: {acc * 100:.2f}%")
     print("=" * 35)
