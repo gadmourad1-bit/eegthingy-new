@@ -19,9 +19,9 @@ GUI_HISTORY_S = 30
 GUI_REFRESH_RATE = 60
 LABELS = {1: "left_hand", 2: "right_hand", 3: "left_foot", 4: "right_foot"}
 PHASES = {1: "prep", 2: "plan", 3: "task", 4: "rest"}
-SMOOTHER_N = 3
-SMOOTHER_M = 2
-SMOOTHER_CONF_FLOOR = 0.85
+SMOOTHER_N = 5
+SMOOTHER_M = 4
+SMOOTHER_CONF_FLOOR = 0.90
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,
