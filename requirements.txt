@@ -7,3 +7,4 @@ brainflow==5.21.0
 mne==1.12.1
 scikit-learn==1.8.0
 websockets==16.0
+pyriemann==0.11

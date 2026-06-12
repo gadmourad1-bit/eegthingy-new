@@ -1,6 +1,7 @@
 DATA_DIR = './data'
 STRIDE_S = 0.2
 FILTER_WARMUP_S = 2.0
+CALIBRATION_SECONDS = 45
 EEG_CHANNELS_MAPPING = [
     'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',  # Cyton ch 1-8  (ch8 unplugged)
     'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',    # Daisy  ch 9-16
