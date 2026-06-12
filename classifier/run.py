@@ -9,7 +9,7 @@ import threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from brainflow.board_shim import BoardShim
-from config import DATA_DIR, DELTA_T, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, TARGET_MAPPINGS
+from config import DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, FILTER_WARMUP_S, STRIDE_S, TARGET_MAPPINGS
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -208,7 +208,7 @@ def run_online():
     ws.start()
     smoother = Smoother(ws)
 
-    bci = OpenBCI(interval=DELTA_T).open()
+    bci = OpenBCI(interval=STRIDE_S).open()
     if bci.board is None:
         print("OpenBCI failed to open.")
         ws.stop()
@@ -219,13 +219,14 @@ def run_online():
         print(f"warning: live sfreq={sfreq} differs from training sfreq={train_sfreq}; "
               "predictions may degrade")
 
-    window_n = int(round(DELTA_T * sfreq))
-    context_n = int(round(2.0 * sfreq))
-    buffer_n = window_n + context_n
+    window_n = n_times
+    warmup_n = int(round(FILTER_WARMUP_S * sfreq))
+    buffer_n = window_n + warmup_n
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
     buffer_lock = threading.Lock()
 
-    print(f"window: {DELTA_T}s ({window_n} samples), buffer: {buffer_n} samples")
+    print(f"stride: {STRIDE_S}s, classify window: {window_n} samples "
+          f"({window_n / sfreq:.2f}s), buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
     gui = GUI(bci, smoother, clf.classes_, sfreq)
 
