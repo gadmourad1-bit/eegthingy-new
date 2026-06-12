@@ -9,11 +9,11 @@ import threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from brainflow.board_shim import BoardShim
-from config import DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX, FILTER_KWARGS, FILTER_WARMUP_S, STRIDE_S, TARGET_MAPPINGS
+from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX,
+                    FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S, STRIDE_S, TARGET_MAPPINGS)
 from mne.decoding import CSP
-from sklearn.linear_model import LogisticRegression
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import accuracy_score, confusion_matrix
 from utils.devices import OpenBCI
@@ -21,8 +21,10 @@ from ws import WebSocket
 from smoother import Smoother
 from gui import GUI
 
-def bandpass(data, sfreq):
-    return mne.filter.filter_data(data, sfreq=sfreq, verbose=False, **FILTER_KWARGS)
+def bandpass(data, sfreq, l_freq, h_freq):
+    return mne.filter.filter_data(data, sfreq=sfreq, l_freq=l_freq, h_freq=h_freq,
+                                  method='fir', phase='minimum', fir_design='firwin',
+                                  verbose=False, **FB_TRANS)
 
 def build_event_id(raw, target_id_dict):
     """Expand prefix-based target mappings to the exact annotation descriptions
@@ -46,32 +48,65 @@ def process_data(file_name, target_id_dict):
     raw.set_montage('standard_1020', on_missing='ignore')
     raw.annotations.description = np.array([str(d).strip().lower() for d in raw.annotations.description])
 
-    raw.filter(**FILTER_KWARGS)
-
     event_id = build_event_id(raw, target_id_dict)
     if not event_id:
         raise ValueError(
             f"No annotations in {file_name} matched any prefix in {target_id_dict}. "
             f"Annotations present: {sorted(set(raw.annotations.description))[:5]}…"
         )
-
     events, event_id_used = mne.events_from_annotations(raw, event_id=event_id)
-    epochs = mne.Epochs(raw, events, event_id=event_id_used,
-                        tmin=EPOCH_TMIN, tmax=EPOCH_TMAX, baseline=None,
-                        preload=True, proj=False, on_missing='warn',
-                        reject=EPOCH_REJECT)
 
-    print(f"Successfully created {len(epochs)} epochs for classes: {epochs.event_id}")
-    return epochs
+    def band_epochs(l_freq, h_freq):
+        filtered = raw.copy().filter(l_freq, h_freq, method='fir', phase='minimum',
+                                     fir_design='firwin', verbose=False, **FB_TRANS)
+        return mne.Epochs(filtered, events, event_id=event_id_used,
+                          tmin=EPOCH_TMIN, tmax=EPOCH_TMAX, baseline=None,
+                          preload=True, proj=False, on_missing='warn')
+
+    bands = [band_epochs(l, h) for (l, h) in FB_BANDS]
+    X = np.stack([b.get_data(copy=False) for b in bands], axis=1)
+    y = bands[0].events[:, -1]
+
+    broadband = band_epochs(FB_BANDS[0][0], FB_BANDS[-1][1]).get_data(copy=False)
+    p2p = (broadband.max(axis=2) - broadband.min(axis=2)).max(axis=1)
+    keep = p2p < EPOCH_REJECT['eeg']
+    X, y = X[keep], y[keep]
+
+    print(f"Created {len(y)} epochs ({int(keep.sum())}/{len(keep)} kept) for classes {sorted(set(y.tolist()))}")
+    return X, y
 
 def discover_files():
     return sorted(glob.glob(os.path.join(DATA_DIR, '*_mi_raw.fif')))
 
+class FilterBankCSP(BaseEstimator, ClassifierMixin):
+    # X is (n_epochs, n_bands, n_channels, n_times): one CSP per band, log-variance
+    # features concatenated across bands, classified with shrinkage-LDA.
+    def __init__(self, n_components=CSP_COMPONENTS):
+        self.n_components = n_components
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        self.csp_ = []
+        feats = []
+        for b in range(X.shape[1]):
+            csp = CSP(n_components=self.n_components, reg='ledoit_wolf', log=True, norm_trace=False)
+            feats.append(csp.fit_transform(X[:, b], y))
+            self.csp_.append(csp)
+        self.lda_ = LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto')
+        self.lda_.fit(np.hstack(feats), y)
+        return self
+
+    def _features(self, X):
+        return np.hstack([csp.transform(X[:, b]) for b, csp in enumerate(self.csp_)])
+
+    def predict(self, X):
+        return self.lda_.predict(self._features(X))
+
+    def predict_proba(self, X):
+        return self.lda_.predict_proba(self._features(X))
+
 def build_pipeline():
-    return Pipeline([
-        ('CSP', CSP(n_components=4, reg='ledoit_wolf', log=True, norm_trace=False)),
-        ('Classifier', LinearDiscriminantAnalysis()),
-    ])
+    return FilterBankCSP()
 
 def parse_indices(raw, n):
     out = []
@@ -128,18 +163,12 @@ def run_offline():
     if overlap:
         print(f"warning: file(s) used in both train and test: {[os.path.basename(f) for f in overlap]}")
 
-    epochs_train = mne.concatenate_epochs(
-        [process_data(f, TARGET_MAPPINGS) for f in train_files]
-    )
+    def load_xy(file_list):
+        parts = [process_data(f, TARGET_MAPPINGS) for f in file_list]
+        return np.concatenate([X for X, _ in parts]), np.concatenate([y for _, y in parts])
 
-    epochs_test = mne.concatenate_epochs(
-        [process_data(f, TARGET_MAPPINGS) for f in test_files]
-    ) if len(test_files) > 1 else process_data(test_files[0], TARGET_MAPPINGS)
-
-    X_train = epochs_train.get_data()
-    y_train = epochs_train.events[:, -1]
-    X_test = epochs_test.get_data()
-    y_test = epochs_test.events[:, -1]
+    X_train, y_train = load_xy(train_files)
+    X_test, y_test = load_xy(test_files)
 
     clf = build_pipeline()
 
@@ -183,17 +212,14 @@ def run_online():
     for f in train_files:
         print(f"  - {os.path.basename(f)}")
 
-    epochs_all = mne.concatenate_epochs([
-        process_data(f, TARGET_MAPPINGS) for f in train_files
-    ]) if len(train_files) > 1 else process_data(train_files[0], TARGET_MAPPINGS)
-    X_train = epochs_all.get_data()
-    y_train = epochs_all.events[:, -1]
-    n_channels = X_train.shape[1]
-    n_times = X_train.shape[2]
+    parts = [process_data(f, TARGET_MAPPINGS) for f in train_files]
+    X_train = np.concatenate([X for X, _ in parts])
+    y_train = np.concatenate([y for _, y in parts])
+    n_bands, n_channels, n_times = X_train.shape[1], X_train.shape[2], X_train.shape[3]
 
     clf = build_pipeline()
     clf.fit(X_train, y_train)
-    print(f"\nTrained on {len(X_train)} epochs across {n_channels} channels x {n_times} samples.")
+    print(f"\nTrained on {len(X_train)} epochs across {n_bands} bands x {n_channels} channels x {n_times} samples.")
 
     raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
     full_names = raw_full.ch_names
@@ -249,9 +275,9 @@ def run_online():
                 return
             buf = buffer.copy()
 
-        filtered = bandpass(buf, sfreq)
-        window = filtered[:, -window_n:][np.newaxis, :, :]
-        gui.push_window(filtered[:, -window_n:])
+        bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
+        window = np.stack(bands, axis=0)[np.newaxis, ...]
+        gui.push_window(bands[0])
 
         probs = clf.predict_proba(window)[0]
         idx = int(np.argmax(probs))

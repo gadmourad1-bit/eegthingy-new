@@ -11,11 +11,9 @@ EEG_CHANNELS_TARGETS = [
 ]
 EPOCH_TMIN = 0.5
 EPOCH_TMAX = 2.5
-FILTER_KWARGS = dict(
-    l_freq=8.0, h_freq=13.0,
-    l_trans_bandwidth=2.0, h_trans_bandwidth=3.0,
-    method='fir', phase='minimum', fir_design='firwin',
-)
+FB_BANDS = [(8.0, 12.0), (11.0, 15.0), (14.0, 20.0), (20.0, 30.0)]
+FB_TRANS = dict(l_trans_bandwidth=2.0, h_trans_bandwidth=2.5)
+CSP_COMPONENTS = 4
 EPOCH_REJECT = dict(eeg=100e-6)
 GUI_HISTORY_S = 30
 GUI_REFRESH_RATE = 60
