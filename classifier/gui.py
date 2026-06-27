@@ -5,7 +5,6 @@ import queue
 
 from collections import deque
 from config import FB_BANDS, GUI_HISTORY_S, GUI_REFRESH_RATE
-import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection
