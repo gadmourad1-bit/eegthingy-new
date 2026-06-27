@@ -1,26 +1,32 @@
 import math
-import mne
 import numpy as np
-import threading
-import time
 import tkinter as tk
 import queue
 
 from collections import deque
-from config import EEG_CHANNELS_TARGETS, GUI_HISTORY_S, GUI_REFRESH_RATE
+from config import FB_BANDS, GUI_HISTORY_S, GUI_REFRESH_RATE
+import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle, Ellipse, Polygon
+from matplotlib.collections import LineCollection
+from matplotlib.colors import to_rgba
+
+
+NEG_COLOR = "#2a78d6"  # classes_[0] side (score < 0)
+POS_COLOR = "#e34948"  # classes_[1] side (score > 0)
+MID_COLOR = "#8a8780"  # inside the abstain band
+TRAIL_LEN = 40
 
 
 class GUI:
-    def __init__(self, bci, smoother, class_labels, sfreq):
+    def __init__(self, bci, smoother, class_labels, sfreq,
+                 band_sep=None, band_abs_max=None):
         self.bci = bci
         self.smoother = smoother
         self.class_labels = list(class_labels)
         self.sfreq = float(sfreq)
         self.queue = queue.Queue()
+        self.viz_queue = queue.Queue()
         self.tick_ms = math.floor((1 / GUI_REFRESH_RATE) * 1000)
         smoother.subscribe(self.queue.put)
 
@@ -36,70 +42,41 @@ class GUI:
         self.last_decision = None
         self.decision_colors = {}
         if len(self.class_labels) > 0:
-            self.decision_colors[self.class_labels[0]] = "tab:blue"
+            self.decision_colors[self.class_labels[0]] = NEG_COLOR
         if len(self.class_labels) > 1:
-            self.decision_colors[self.class_labels[1]] = "tab:red"
+            self.decision_colors[self.class_labels[1]] = POS_COLOR
 
-        montage = mne.channels.make_standard_montage("standard_1020")
-        ch_pos = montage.get_positions()["ch_pos"]
-        pos3 = np.array(
-            [ch_pos[name] if name in ch_pos else np.zeros(3) for name in EEG_CHANNELS_TARGETS]
-        )
-        self.views = self._build_views(pos3)
+        cf = float(getattr(smoother, "conf_floor", 0.9))
+        cf = min(max(cf, 1e-3), 1 - 1e-3)
+        self.gate = math.log(cf / (1.0 - cf))
 
-        self.topo_queue = queue.Queue(maxsize=2)
-        self.stop_evt = threading.Event()
+        self.band_sep = None if band_sep is None else np.asarray(band_sep, float)
+        self.band_abs_max = float(band_abs_max) if band_abs_max else 1.0
+        self.n_bands = len(FB_BANDS)
+        self.best_band = int(np.argmax(self.band_sep)) if self.band_sep is not None else None
+
+        self.score_lim = max(6.0, self.gate * 2.5)
+
+        self.score_hist = deque(maxlen=TRAIL_LEN)
+        self.latest_band_sig = None
 
         self._build_window()
-        self._start_topo_thread()
 
-        self.bgs = {}
-        self._pending_bg_capture = True
-        self._pred_dirty = False
-        self._topo_dirty = False
+        self.bg = None
+        self._dirty = False
         self.canvas.mpl_connect("draw_event", self._on_draw)
         self.canvas.mpl_connect("resize_event", self._on_resize)
         self.root.after(50, self._tick)
 
-    def push_window(self, _eeg):
-        """Accepted but unused — kept for compatibility with start.py."""
-        pass
-
-    def _build_views(self, pos3):
-        rotations = {
-            "top": np.eye(3, dtype=float),
-            "left": np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=float),
-            "back": np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=float),
-        }
-        views = {}
-        for name, R in rotations.items():
-            rotated = pos3 @ R.T
-            norms = np.linalg.norm(rotated, axis=1, keepdims=True)
-            norms = np.where(norms < 1e-9, 1.0, norms)
-            unit = rotated / norms
-            theta = np.arccos(np.clip(unit[:, 2], -1.0, 1.0))
-            phi = np.arctan2(unit[:, 1], unit[:, 0])
-            x2d = theta * np.cos(phi)
-            y2d = theta * np.sin(phi)
-            pos2d = np.column_stack([x2d, y2d])
-            visible = unit[:, 2] > -0.05
-            pos_vis = pos2d[visible]
-            r = (
-                float(np.max(np.linalg.norm(pos_vis, axis=1))) * 1.10
-                if len(pos_vis)
-                else np.pi / 2
-            )
-            views[name] = {
-                "positions": pos_vis,
-                "visible": visible,
-                "r": r,
-            }
-        return views
+    def push_decision(self, score, band_signal):
+        """Called from the inference thread with the live discriminant score and the
+        per-band signed contributions that sum (with bias) to it."""
+        self.viz_queue.put((float(score), np.asarray(band_signal, dtype=float)))
 
     def _build_window(self):
         self.root = tk.Tk()
         self.root.title("EEG Classifier Visualizer")
-        win_w, win_h = 700, 400
+        win_w, win_h = 760, 440
         self.root.update_idletasks()
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
@@ -110,16 +87,22 @@ class GUI:
 
         self.fig = Figure(figsize=(14, 8), constrained_layout=True)
         gs = self.fig.add_gridspec(
-            2, 4, height_ratios=[1, 1], width_ratios=[1.2, 1, 1, 1]
+            2, 4, height_ratios=[1, 1.15], width_ratios=[0.9, 1.05, 1.05, 0.95]
         )
         self.ax_conf = self.fig.add_subplot(gs[0, :])
         self.ax_probs = self.fig.add_subplot(gs[1, 0])
-        self.topo_axes = {
-            "top": self.fig.add_subplot(gs[1, 1]),
-            "left": self.fig.add_subplot(gs[1, 2]),
-            "back": self.fig.add_subplot(gs[1, 3]),
-        }
+        self.ax_axis = self.fig.add_subplot(gs[1, 1:3])
+        self.ax_bands = self.fig.add_subplot(gs[1, 3])
 
+        self._build_conf()
+        self._build_probs()
+        self._build_axis()
+        self._build_bands()
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _build_conf(self):
         self.ax_conf.set_title("confidence over time")
         self.ax_conf.set_xlabel("seconds")
         self.ax_conf.set_ylabel("p(class)")
@@ -127,39 +110,29 @@ class GUI:
         self.ax_conf.set_xlim(-GUI_HISTORY_S, 0)
         self.ax_conf.axhline(0.5, color="gray", lw=0.5, ls="--")
 
-        colors = ["tab:blue", "tab:red", "tab:green", "tab:orange"]
+        colors = [NEG_COLOR, POS_COLOR, "tab:green", "tab:orange"]
         self.conf_lines = {}
         for i, c in enumerate(self.class_labels):
             (line,) = self.ax_conf.plot(
-                [],
-                [],
-                color=colors[i % len(colors)],
-                lw=1.5,
-                label=f"class {c}",
-                animated=True,
+                [], [], color=colors[i % len(colors)], lw=1.5,
+                label=f"class {c}", animated=True,
             )
             self.conf_lines[c] = line
         self.ax_conf.legend(loc="upper right")
 
-        from matplotlib.collections import LineCollection
-
         self.onset_collections = {}
         for c in self.class_labels:
-            color = self.decision_colors.get(c, "gray")
             lc = LineCollection(
-                [],
-                colors=color,
-                alpha=0.7,
-                lw=1.2,
-                linestyles="dashed",
-                animated=True,
-                zorder=1,
+                [], colors=self.decision_colors.get(c, "gray"), alpha=0.7,
+                lw=1.2, linestyles="dashed", animated=True, zorder=1,
             )
             self.ax_conf.add_collection(lc)
             self.onset_collections[c] = lc
 
+    def _build_probs(self):
         self.ax_probs.set_title("current probs")
         self.ax_probs.set_ylim(0, 1)
+        colors = [NEG_COLOR, POS_COLOR, "tab:green", "tab:orange"]
         self.prob_bars = self.ax_probs.bar(
             [str(c) for c in self.class_labels],
             [0.0] * len(self.class_labels),
@@ -168,251 +141,109 @@ class GUI:
         for bar in self.prob_bars:
             bar.set_animated(True)
 
-        self.topo_titles = {"top": "top view", "left": "side view", "back": "back view"}
-        self.topo_imgs = {}
-        for name, ax in self.topo_axes.items():
-            ax.set_title(self.topo_titles[name])
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_aspect("equal")
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            placeholder = np.ones((4, 4, 4), dtype=np.uint8) * 255
-            self.topo_imgs[name] = ax.imshow(placeholder, animated=True, aspect="equal")
-            ax.set_xlim(-1, 1)
-            ax.set_ylim(-1, 1)
+    def _build_axis(self):
+        ax = self.ax_axis
+        sl = self.score_lim
+        neg_c = self.class_labels[0] if len(self.class_labels) > 0 else 0
+        pos_c = self.class_labels[1] if len(self.class_labels) > 1 else 1
 
-        self.off_figs = {}
-        for name in self.topo_axes:
-            fig = Figure(figsize=(3.2, 3.4), constrained_layout=True)
-            canvas = FigureCanvasAgg(fig)
-            ax = fig.add_subplot()
-            ax.set_aspect("equal")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            self.off_figs[name] = (fig, canvas, ax)
+        ax.set_title("live decision axis")
+        ax.set_xlabel("discriminant score  (log-odds)")
+        ax.set_xlim(-sl, sl)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
 
-        self.decision_text = self.fig.text(
-            0.5,
-            0.94,
-            "—",
-            ha="center",
-            va="top",
-            fontsize=24,
-            fontweight="bold",
-            color="gray",
-            animated=True,
+        ax.axvspan(-sl, -self.gate, color=NEG_COLOR, alpha=0.07, zorder=0)
+        ax.axvspan(self.gate, sl, color=POS_COLOR, alpha=0.07, zorder=0)
+        ax.axvline(0, color="#444", lw=1.6, zorder=3)
+        for g in (-self.gate, self.gate):
+            ax.axvline(g, color="#666", lw=1.0, ls="--", zorder=3)
+
+        ax.text(-sl * 0.96, 0.485, f"← class {neg_c}", ha="left", va="center",
+                fontsize=9, color=NEG_COLOR, fontweight="bold")
+        ax.text(sl * 0.96, 0.485, f"class {pos_c} →", ha="right", va="center",
+                fontsize=9, color=POS_COLOR, fontweight="bold")
+        ax.text(0, 0.485, "abstain", ha="center", va="center", fontsize=8, color=MID_COLOR)
+
+        self.live_scatter = ax.scatter([], [], animated=True, zorder=6, edgecolors="none")
+        self.decision_text = ax.text(
+            0.5, 0.045, "—", transform=ax.transAxes, ha="center", va="bottom",
+            fontsize=12, fontweight="bold", color="#bbb", animated=True, zorder=7,
         )
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    def _build_bands(self):
+        ax = self.ax_bands
+        m = self.band_abs_max
+        ax.set_title("band contribution")
+        ax.set_xlim(-m * 1.05, m * 1.05)
+        ax.set_ylim(self.n_bands - 0.5, -0.5)
+        ax.axvline(0, color="#444", lw=1.0, zorder=3)
 
-    def _start_topo_thread(self):
-        def worker():
-            period = 1.0 / (GUI_REFRESH_RATE)
-            while not self.stop_evt.is_set():
-                t0 = time.perf_counter()
-                try:
-                    data = self.bci.get_data()
-                    eeg = data.get("eeg")
-                    if eeg is not None and len(eeg) > 0:
-                        n = min(len(eeg), len(EEG_CHANNELS_TARGETS))
-                        values = np.zeros(len(EEG_CHANNELS_TARGETS))
-                        values[:n] = eeg[:n]
-                        imgs = self._render_offscreen(values)
-                        if imgs is not None:
-                            try:
-                                self.topo_queue.put_nowait(imgs)
-                            except queue.Full:
-                                try:
-                                    self.topo_queue.get_nowait()
-                                except queue.Empty:
-                                    pass
-                                try:
-                                    self.topo_queue.put_nowait(imgs)
-                                except queue.Full:
-                                    pass
-                except Exception as e:
-                    print(f"[gui] topo worker error: {e}")
-                dt = time.perf_counter() - t0
-                rest = period - dt
-                if rest > 0:
-                    time.sleep(rest)
+        ypos = np.arange(self.n_bands)
+        self.band_bars = ax.barh(ypos, [0.0] * self.n_bands, height=0.66,
+                                 color=MID_COLOR, zorder=2)
+        for bar in self.band_bars:
+            bar.set_animated(True)
 
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _render_offscreen(self, values):
-        finite = values[np.isfinite(values)]
-        if finite.size:
-            lo, hi = float(finite.min()), float(finite.max())
-            if hi - lo < 1e-9:
-                hi = lo + 1e-9
-        else:
-            lo, hi = 0.0, 1.0
-
-        out = {}
-        for name, (_fig, canvas, ax) in self.off_figs.items():
-            v = self.views[name]
-            vals = values[v["visible"]]
-            ax.clear()
-            ax.set_aspect("equal")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            try:
-                mne.viz.plot_topomap(
-                    vals,
-                    v["positions"],
-                    axes=ax,
-                    show=False,
-                    cmap="viridis",
-                    vlim=(lo, hi),
-                    sensors=True,
-                    contours=0,
-                    outlines="head",
-                    extrapolate="head",
-                    sphere=(0.0, 0.0, 0.0, v["r"]),
-                )
-                for ln in list(ax.lines):
-                    ln.remove()
-            except Exception as e:
-                print(f"[gui] plot_topomap error: {e}")
-                continue
-            marks = self.HEAD_MARKS[name]
-            self._draw_head_marks(ax, v["r"], marks["nose_deg"], marks["ear_degs"])
-            lim = v["r"] * 1.2
-            ax.set_xlim(-lim, lim)
-            ax.set_ylim(-lim, lim)
-
-            canvas.draw()
-            w, h = canvas.get_width_height()
-            buf = (
-                np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
-                .reshape(h, w, 4)
-                .copy()
-            )
-            out[name] = buf
-        return out
+        labels = [f"{int(l)}–{int(h)}" for (l, h) in FB_BANDS]
+        ax.set_yticks(ypos)
+        ax.set_yticklabels(labels)
+        ax.tick_params(axis="y", labelsize=8)
+        if self.best_band is not None:
+            ax.get_yticklabels()[self.best_band].set_fontweight("bold")
 
     def _on_draw(self, _event):
-        if self._pending_bg_capture or not self.bgs:
-            for name, ax in self.topo_axes.items():
-                self.bgs[name] = self.canvas.copy_from_bbox(ax.bbox)
-            self.bgs["fig"] = self.canvas.copy_from_bbox(self.fig.bbox)
-            self._pending_bg_capture = False
-            self._pred_dirty = True
-            self._topo_dirty = True
+        self.bg = self.canvas.copy_from_bbox(self.fig.bbox)
+        self._dirty = True
 
     def _on_resize(self, _event):
-        self._pending_bg_capture = True
+        self.bg = None
         self.canvas.draw_idle()
 
     def _tick(self):
-        got_pred = False
         while True:
             try:
-                payload = self.queue.get_nowait()
+                self._consume_payload(self.queue.get_nowait())
             except queue.Empty:
                 break
-            self._consume_payload(payload)
-            got_pred = True
-        if got_pred:
-            self._pred_dirty = True
+            self._dirty = True
 
-        latest = None
         while True:
             try:
-                latest = self.topo_queue.get_nowait()
+                score, band_sig = self.viz_queue.get_nowait()
             except queue.Empty:
                 break
-        if latest is not None:
-            for name, img_arr in latest.items():
-                topo = self.topo_imgs[name]
-                cur = topo.get_array()
-                if cur is None or cur.shape != img_arr.shape:
-                    topo.set_extent((-1, 1, -1, 1))
-                    topo.axes.set_xlim(-1, 1)
-                    topo.axes.set_ylim(-1, 1)
-                topo.set_data(img_arr)
-            self._topo_dirty = True
+            self.score_hist.append(score)
+            self.latest_band_sig = band_sig
+            self._dirty = True
 
-        if not self.bgs or self._pending_bg_capture:
+        if self.bg is None:
             self.canvas.draw_idle()
             self.root.after(self.tick_ms, self._tick)
             return
 
-        if self._pred_dirty:
+        if self._dirty:
             self._refresh_onsets()
             self._refresh_conf_lines()
             self._refresh_probs()
+            self._refresh_axis()
+            self._refresh_bands()
             self._refresh_decision()
-            self.canvas.restore_region(self.bgs["fig"])
+            self.canvas.restore_region(self.bg)
             for lc in self.onset_collections.values():
                 self.ax_conf.draw_artist(lc)
             for line in self.conf_lines.values():
                 self.ax_conf.draw_artist(line)
             for bar in self.prob_bars:
                 self.ax_probs.draw_artist(bar)
-            for img in self.topo_imgs.values():
-                img.axes.draw_artist(img)
-            self.fig.draw_artist(self.decision_text)
+            self.ax_axis.draw_artist(self.live_scatter)
+            for bar in self.band_bars:
+                self.ax_bands.draw_artist(bar)
+            self.ax_axis.draw_artist(self.decision_text)
             self.canvas.blit(self.fig.bbox)
-            self._pred_dirty = False
-            self._topo_dirty = False
-        elif self._topo_dirty:
-            for name, img in self.topo_imgs.items():
-                self.canvas.restore_region(self.bgs[name])
-                img.axes.draw_artist(img)
-                self.canvas.blit(img.axes.bbox)
-            self._topo_dirty = False
+            self._dirty = False
 
         self.root.after(self.tick_ms, self._tick)
-
-    HEAD_MARKS = {
-        "top": {"nose_deg": 90, "ear_degs": (0, 180)},
-        "left": {"nose_deg": 0, "ear_degs": ()},
-        "back": {"nose_deg": None, "ear_degs": (0, 180)},
-    }
-
-    def _draw_head_marks(self, ax, r, nose_deg, ear_degs):
-        head = Circle((0, 0), r, color="k", fill=False, lw=1.2)
-        ax.add_patch(head)
-        for art in list(ax.images) + list(ax.collections):
-            try:
-                art.set_clip_path(head)
-            except Exception:
-                pass
-
-        if nose_deg is not None:
-            a = math.radians(nose_deg)
-            half = math.radians(11)
-            base_l = (r * math.cos(a + half), r * math.sin(a + half))
-            base_r = (r * math.cos(a - half), r * math.sin(a - half))
-            tip = (r * 1.10 * math.cos(a), r * 1.10 * math.sin(a))
-            ax.add_patch(
-                Polygon(
-                    [base_l, tip, base_r], closed=True, fill=False, color="k", lw=1.2
-                )
-            )
-
-        for ang in ear_degs:
-            a = math.radians(ang)
-            cx = r * 1.045 * math.cos(a)
-            cy = r * 1.045 * math.sin(a)
-            ax.add_patch(
-                Ellipse(
-                    (cx, cy),
-                    width=0.10 * r,
-                    height=0.20 * r,
-                    angle=ang,
-                    fill=False,
-                    color="k",
-                    lw=1.2,
-                )
-            )
 
     def _consume_payload(self, payload):
         ts = payload["timestamp"]
@@ -466,18 +297,46 @@ class GUI:
         for bar, c in zip(self.prob_bars, self.class_labels):
             bar.set_height(self.latest_probs.get(c, 0.0))
 
+    def _refresh_axis(self):
+        n = len(self.score_hist)
+        if n == 0:
+            self.live_scatter.set_offsets(np.empty((0, 2)))
+            return
+        scores = np.fromiter(self.score_hist, dtype=float)
+        xs = np.clip(scores, -self.score_lim * 0.985, self.score_lim * 0.985)
+        frac = (n - 1 - np.arange(n)) / max(n - 1, 1)
+        ys = 0.53 + frac * 0.44
+        sizes = 150 * (1 - 0.78 * frac) + 12
+        alphas = np.clip(1.0 - 0.82 * frac, 0.12, 1.0)
+        base = np.where(scores > self.gate, POS_COLOR,
+                        np.where(scores < -self.gate, NEG_COLOR, MID_COLOR))
+        rgba = np.array([to_rgba(base[i], alphas[i]) for i in range(n)])
+        self.live_scatter.set_offsets(np.column_stack([xs, ys]))
+        self.live_scatter.set_sizes(sizes)
+        self.live_scatter.set_color(rgba)
+
+    def _refresh_bands(self):
+        sig = self.latest_band_sig
+        if sig is None:
+            return
+        dom = int(np.argmax(np.abs(sig)))
+        for i, bar in enumerate(self.band_bars):
+            if i >= len(sig):
+                break
+            w = float(sig[i])
+            bar.set_width(w)
+            col = POS_COLOR if w >= 0 else NEG_COLOR
+            bar.set_color(to_rgba(col, 1.0 if i == dom else 0.32))
+
     def _refresh_decision(self):
-        if self.latest_decision is None:
-            self.decision_text.set_text("—")
-            self.decision_text.set_color("gray")
+        if self.latest_consensus and self.latest_decision:
+            self.decision_text.set_text(f"decision: class {self.latest_decision}")
+            self.decision_text.set_color(self.decision_colors.get(self.latest_decision, "#444"))
         else:
-            self.decision_text.set_text(f"class {self.latest_decision}")
-            self.decision_text.set_color(
-                "tab:green" if self.latest_consensus else "gray"
-            )
+            self.decision_text.set_text("decision: —")
+            self.decision_text.set_color("#bbb")
 
     def _on_close(self):
-        self.stop_evt.set()
         self.root.quit()
         self.root.destroy()
 

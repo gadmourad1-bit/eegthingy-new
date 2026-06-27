@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -32,6 +33,18 @@ def bandpass(data, sfreq, l_freq, h_freq):
     return mne.filter.filter_data(data, sfreq=sfreq, l_freq=l_freq, h_freq=h_freq,
                                   method='fir', phase='minimum', fir_design='firwin',
                                   verbose=False, **FB_TRANS)
+
+def _band_decomp(feats, coef):
+    """Slice boundaries of each band's block in the concatenated feature vector,
+    plus that block's mean contribution (feat . coef) to the linear score over the
+    training set. The discriminant is linear, so score = sum_band(contrib_b) + bias."""
+    slices, start = [], 0
+    for f in feats:
+        slices.append((start, start + f.shape[1]))
+        start += f.shape[1]
+    F = np.hstack(feats)
+    contribs = np.column_stack([F[:, s:e] @ coef[s:e] for (s, e) in slices])
+    return slices, contribs.mean(axis=0)
 
 def build_event_id(raw, target_id_dict):
     """Expand prefix-based target mappings to the exact annotation descriptions
@@ -101,6 +114,8 @@ class FilterBankCSP(BaseEstimator, ClassifierMixin):
             self.csp_.append(csp)
         self.lda_ = LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto')
         self.lda_.fit(np.hstack(feats), y)
+        self.coef_ = self.lda_.coef_[0]
+        self.band_slices_, self.band_mid_ = _band_decomp(feats, self.coef_)
         return self
 
     def _features(self, X):
@@ -111,6 +126,14 @@ class FilterBankCSP(BaseEstimator, ClassifierMixin):
 
     def predict_proba(self, X):
         return self.lda_.predict_proba(self._features(X))
+
+    def analyze(self, X):
+        """One feature pass -> (probabilities, signed discriminant score, per-band
+        centered contribution to that score). band_signal[b] > 0 pushes toward
+        classes_[1], < 0 toward classes_[0]; magnitude = how hard band b is voting."""
+        F = self._features(X)
+        contribs = np.column_stack([F[:, s:e] @ self.coef_[s:e] for (s, e) in self.band_slices_])
+        return self.lda_.predict_proba(F), self.lda_.decision_function(F), contribs - self.band_mid_
 
 def build_pipeline():
     return FilterBankCSP()
@@ -135,6 +158,8 @@ class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
             feats.append(aligned)
         self.lr_ = LogisticRegression(max_iter=2000)
         self.lr_.fit(np.hstack(feats), y)
+        self.coef_ = self.lr_.coef_[0]
+        self.band_slices_, self.band_mid_ = _band_decomp(feats, self.coef_)
         return self
 
     def set_reference(self, X_cal):
@@ -168,6 +193,11 @@ class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
 
     def predict_proba(self, X):
         return self.lr_.predict_proba(self._features(X))
+
+    def analyze(self, X):
+        F = self._features(X)
+        contribs = np.column_stack([F[:, s:e] @ self.coef_[s:e] for (s, e) in self.band_slices_])
+        return self.lr_.predict_proba(F), self.lr_.decision_function(F), contribs - self.band_mid_
 
 def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
     """Stream `seconds` of EEG while the subject imagines the task in the online
@@ -365,10 +395,19 @@ def run_online():
         else:
             print("calibration produced too little data; falling back to training reference.")
 
-    gui = GUI(bci, smoother, clf.classes_, sfreq)
+    _, _, train_signal = clf.analyze(X_train)
+    cls = clf.classes_
+    sig0, sig1 = train_signal[y_train == cls[0]], train_signal[y_train == cls[1]]
+    band_sep = np.abs(sig1.mean(0) - sig0.mean(0)) / (np.sqrt(0.5 * (sig0.var(0) + sig1.var(0))) + 1e-9)
+    band_abs_max = float(np.percentile(np.abs(train_signal), 99)) or 1.0
+
+    gui = GUI(bci, smoother, clf.classes_, sfreq,
+              band_sep=band_sep, band_abs_max=band_abs_max)
+
+    prev_print_t = None
 
     def on_chunk(chunk):
-        nonlocal buffer
+        nonlocal buffer, prev_print_t
         eeg_all = chunk[bci.eeg, :]
         if eeg_all.shape[1] == 0:
             return
@@ -388,12 +427,13 @@ def run_online():
 
         bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
         window = np.stack(bands, axis=0)[np.newaxis, ...]
-        gui.push_window(bands[0])
 
-        probs = clf.predict_proba(window)[0]
+        proba, score, band_sig = clf.analyze(window)
+        probs = proba[0]
         idx = int(np.argmax(probs))
         pred = clf.classes_[idx]
         conf = probs[idx]
+        gui.push_decision(float(score[0]), band_sig[0])
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
 
         decision, consensus = smoother.add(
@@ -402,7 +442,11 @@ def run_online():
             probs=dict(zip(clf.classes_, probs)),
         )
         tag = decision if consensus else "—"
-        print(f"raw: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  → smoothed: {tag}")
+        now = time.perf_counter()
+        dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0
+        prev_print_t = now
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  raw: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  → smoothed: {tag}")
 
     bci.callback = on_chunk
     bci.start()
