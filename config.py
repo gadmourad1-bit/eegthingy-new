@@ -23,6 +23,7 @@ PHASES = {1: "prep", 2: "plan", 3: "task", 4: "rest"}
 SMOOTHER_N = 5
 SMOOTHER_M = 4
 SMOOTHER_CONF_FLOOR = 0.90
+SMOOTHER_DWELL = 3
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,

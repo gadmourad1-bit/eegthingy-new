@@ -2,7 +2,7 @@ import time
 import threading
 from collections import deque, Counter
 
-from config import SMOOTHER_N, SMOOTHER_M, SMOOTHER_CONF_FLOOR
+from config import SMOOTHER_N, SMOOTHER_M, SMOOTHER_CONF_FLOOR, SMOOTHER_DWELL
 
 
 class Smoother:
@@ -12,18 +12,27 @@ class Smoother:
     abstain (None) and don't count toward any class. Of the N most recent
     entries, a class wins only if it has >= M votes.
 
+    Dwell gate (post-consensus): a consensus class is only committed as the
+    'final' decision once it has been the consensus for `dwell` consecutive
+    windows. Any change of consensus class, or loss of consensus, resets the
+    dwell counter to zero.
+
     On every add(), broadcasts the full buffer state + the smoothed decision
     via the websocket's broadcast() method.
     """
 
-    def __init__(self, ws, n=SMOOTHER_N, m=SMOOTHER_M, conf_floor=SMOOTHER_CONF_FLOOR):
+    def __init__(self, ws, n=SMOOTHER_N, m=SMOOTHER_M, conf_floor=SMOOTHER_CONF_FLOOR,
+                 dwell=SMOOTHER_DWELL):
         if m > n:
             raise ValueError(f"M ({m}) cannot exceed N ({n})")
         self.ws = ws
         self.n = n
         self.m = m
         self.conf_floor = conf_floor
+        self.dwell = dwell
         self.buffer = deque(maxlen=n)
+        self.dwell_decision = 0
+        self.dwell_count = 0
         self.lock = threading.Lock()
         self.subscribers = []
 
@@ -54,10 +63,23 @@ class Smoother:
 
         decision, consensus, votes = self._vote(snapshot)
 
+        if consensus and decision == self.dwell_decision:
+            self.dwell_count += 1
+        elif consensus:
+            self.dwell_decision = decision
+            self.dwell_count = 1
+        else:
+            self.dwell_decision = 0
+            self.dwell_count = 0
+        final = decision if consensus and self.dwell_count >= self.dwell else 0
+
         payload = {
             "smoothed": {
                 "decision": decision,
                 "consensus": consensus,
+                "final": final,
+                "dwell": self.dwell,
+                "dwell_count": self.dwell_count,
                 "votes": {str(k): v for k, v in votes.items()},
                 "abstain": sum(1 for e in snapshot if e["vote"] is None),
                 "n": self.n,
@@ -75,7 +97,7 @@ class Smoother:
             except Exception as e:
                 print(f"smoother subscriber error: {e}")
 
-        return decision, consensus
+        return decision, consensus, final
 
     def _vote(self, snapshot):
         votes = Counter(e["vote"] for e in snapshot if e["vote"] is not None)

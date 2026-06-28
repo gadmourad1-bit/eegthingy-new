@@ -64,10 +64,10 @@ class OpenBCI:
         try:
             params = BrainFlowInputParams()
             params.timeout = 30
-            params.serial_port = self.find_serial_port()
+            #params.serial_port = self.find_serial_port()
  
-            temp_board = BoardShim(BoardIds.CYTON_DAISY_BOARD.value, params)
-            #temp_board = BoardShim(BoardIds.SYNTHETIC_BOARD.value, params)
+            #temp_board = BoardShim(BoardIds.CYTON_DAISY_BOARD.value, params)
+            temp_board = BoardShim(BoardIds.SYNTHETIC_BOARD.value, params)
             temp_board.prepare_session()
             time.sleep(1)
             temp_board.start_stream()

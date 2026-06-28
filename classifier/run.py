@@ -436,17 +436,18 @@ def run_online():
         gui.push_decision(float(score[0]), band_sig[0])
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
 
-        decision, consensus = smoother.add(
+        decision, consensus, final = smoother.add(
             prediction=pred,
             confidence=conf,
             probs=dict(zip(clf.classes_, probs)),
         )
         tag = decision if consensus else "—"
+        commit = f"  ✓ COMMIT {final}" if final else ""
         now = time.perf_counter()
         dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0
         prev_print_t = now
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  raw: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  → smoothed: {tag}")
+        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  raw: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  → smoothed: {tag}{commit}")
 
     bci.callback = on_chunk
     bci.start()

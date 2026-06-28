@@ -37,6 +37,9 @@ class GUI:
         self.latest_probs = {c: 0.0 for c in self.class_labels}
         self.latest_decision = None
         self.latest_consensus = False
+        self.latest_final = 0
+        self.latest_dwell = 0
+        self.latest_dwell_count = 0
         self.transition_hist = deque(maxlen=max_points)
         self.last_decision = None
         self.decision_colors = {}
@@ -261,8 +264,11 @@ class GUI:
         smoothed = payload["smoothed"]
         self.latest_decision = smoothed["decision"]
         self.latest_consensus = smoothed["consensus"]
+        self.latest_final = smoothed.get("final", 0)
+        self.latest_dwell = smoothed.get("dwell", 0)
+        self.latest_dwell_count = smoothed.get("dwell_count", 0)
 
-        new_d = smoothed["decision"] if smoothed["consensus"] else None
+        new_d = self.latest_final or None
         if new_d != self.last_decision:
             if new_d is not None:
                 self.transition_hist.append((rel_t, new_d))
@@ -328,9 +334,13 @@ class GUI:
             bar.set_color(to_rgba(col, 1.0 if i == dom else 0.32))
 
     def _refresh_decision(self):
-        if self.latest_consensus and self.latest_decision:
-            self.decision_text.set_text(f"decision: class {self.latest_decision}")
-            self.decision_text.set_color(self.decision_colors.get(self.latest_decision, "#444"))
+        if self.latest_final:
+            self.decision_text.set_text(f"decision: class {self.latest_final}")
+            self.decision_text.set_color(self.decision_colors.get(self.latest_final, "#444"))
+        elif self.latest_consensus and self.latest_decision:
+            self.decision_text.set_text(
+                f"class {self.latest_decision}?  {self.latest_dwell_count}/{self.latest_dwell}")
+            self.decision_text.set_color("#8a8780")
         else:
             self.decision_text.set_text("decision: —")
             self.decision_text.set_color("#bbb")
