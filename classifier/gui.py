@@ -14,7 +14,9 @@ from matplotlib.colors import to_rgba
 NEG_COLOR = "#2a78d6"  # classes_[0] side (score < 0)
 POS_COLOR = "#e34948"  # classes_[1] side (score > 0)
 MID_COLOR = "#8a8780"  # inside the abstain band
+CONSENSUS_COLOR = "#ff9500"  # edge highlight for windows that held M-of-N consensus
 TRAIL_LEN = 40
+SAMPLE_HIST_LEN = 10
 
 
 class GUI:
@@ -51,6 +53,7 @@ class GUI:
         cf = float(getattr(smoother, "conf_floor", 0.9))
         cf = min(max(cf, 1e-3), 1 - 1e-3)
         self.gate = math.log(cf / (1.0 - cf))
+        self.conf_floor = cf
 
         self.band_sep = None if band_sep is None else np.asarray(band_sep, float)
         self.band_abs_max = float(band_abs_max) if band_abs_max else 1.0
@@ -61,6 +64,7 @@ class GUI:
 
         self.score_hist = deque(maxlen=TRAIL_LEN)
         self.latest_band_sig = None
+        self.sample_hist = deque(maxlen=SAMPLE_HIST_LEN)
 
         self._build_window()
 
@@ -89,17 +93,19 @@ class GUI:
 
         self.fig = Figure(figsize=(14, 8), constrained_layout=True)
         gs = self.fig.add_gridspec(
-            2, 4, height_ratios=[1, 1.15], width_ratios=[0.9, 1.05, 1.05, 0.95]
+            3, 4, height_ratios=[1, 1.15, 0.16], width_ratios=[0.9, 1.05, 1.05, 0.95]
         )
         self.ax_conf = self.fig.add_subplot(gs[0, :])
         self.ax_probs = self.fig.add_subplot(gs[1, 0])
         self.ax_axis = self.fig.add_subplot(gs[1, 1:3])
         self.ax_bands = self.fig.add_subplot(gs[1, 3])
+        self.ax_samples = self.fig.add_subplot(gs[2, :])
 
         self._build_conf()
         self._build_probs()
         self._build_axis()
         self._build_bands()
+        self._build_samples()
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -149,8 +155,7 @@ class GUI:
         neg_c = self.class_labels[0] if len(self.class_labels) > 0 else 0
         pos_c = self.class_labels[1] if len(self.class_labels) > 1 else 1
 
-        ax.set_title("live decision axis")
-        ax.set_xlabel("discriminant score  (log-odds)")
+        ax.set_title("confidence gate (log-odds)")
         ax.set_xlim(-sl, sl)
         ax.set_ylim(0, 1)
         ax.set_yticks([])
@@ -168,15 +173,11 @@ class GUI:
         ax.text(0, 0.485, "abstain", ha="center", va="center", fontsize=8, color=MID_COLOR)
 
         self.live_scatter = ax.scatter([], [], animated=True, zorder=6, edgecolors="none")
-        self.decision_text = ax.text(
-            0.5, 0.045, "—", transform=ax.transAxes, ha="center", va="bottom",
-            fontsize=12, fontweight="bold", color="#bbb", animated=True, zorder=7,
-        )
 
     def _build_bands(self):
         ax = self.ax_bands
         m = self.band_abs_max
-        ax.set_title("band contribution")
+        ax.set_title("band contribution", fontsize=9)
         ax.set_xlim(-m * 1.05, m * 1.05)
         ax.set_ylim(self.n_bands - 0.5, -0.5)
         ax.axvline(0, color="#444", lw=1.0, zorder=3)
@@ -193,6 +194,42 @@ class GUI:
         ax.tick_params(axis="y", labelsize=8)
         if self.best_band is not None:
             ax.get_yticklabels()[self.best_band].set_fontweight("bold")
+
+    def _build_samples(self):
+        ax = self.ax_samples
+        n = SAMPLE_HIST_LEN
+        hist_w, final_w = 0.82, 0.9
+        self._final_x = n + 0.6  # committed-decision slot, past a gap at the right end
+        ax.set_title("M of N voting + dwell gate", fontsize=10, pad=4)
+        ax.set_xlim(-hist_w / 2, self._final_x + final_w / 2)
+        ax.set_ylim(0, 1)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        xs = np.arange(n)
+        self.sample_bars = ax.bar(xs, [1.0] * n, width=hist_w,
+                                   color=MID_COLOR, alpha=0.0, zorder=2)
+        for bar in self.sample_bars:
+            bar.set_animated(True)
+        self.sample_texts = [
+            ax.text(x, 0.5, "", ha="center", va="center", fontsize=9,
+                    fontweight="bold", color="white", animated=True, zorder=3)
+            for x in xs
+        ]
+
+        ax.axvline((n - 1 + self._final_x) / 2, color="#cccccc", lw=0.8, zorder=1)
+        ax.text(self._final_x, 1.04, "decision", ha="center", va="bottom",
+                fontsize=8, color="#555", clip_on=False, zorder=3)
+        (self.final_bar,) = ax.bar([self._final_x], [1.0], width=final_w, zorder=2)
+        self.final_bar.set_facecolor(to_rgba(MID_COLOR, 0.15))
+        self.final_bar.set_edgecolor("#333333")
+        self.final_bar.set_linewidth(1.6)
+        self.final_bar.set_animated(True)
+        self.final_text = ax.text(self._final_x, 0.5, "", ha="center", va="center",
+                                  fontsize=10, fontweight="bold", color="white",
+                                  animated=True, zorder=3)
 
     def _on_draw(self, _event):
         self.bg = self.canvas.copy_from_bbox(self.fig.bbox)
@@ -230,7 +267,7 @@ class GUI:
             self._refresh_probs()
             self._refresh_axis()
             self._refresh_bands()
-            self._refresh_decision()
+            self._refresh_samples()
             self.canvas.restore_region(self.bg)
             for lc in self.onset_collections.values():
                 self.ax_conf.draw_artist(lc)
@@ -241,7 +278,12 @@ class GUI:
             self.ax_axis.draw_artist(self.live_scatter)
             for bar in self.band_bars:
                 self.ax_bands.draw_artist(bar)
-            self.ax_axis.draw_artist(self.decision_text)
+            for bar in self.sample_bars:
+                self.ax_samples.draw_artist(bar)
+            for text in self.sample_texts:
+                self.ax_samples.draw_artist(text)
+            self.ax_samples.draw_artist(self.final_bar)
+            self.ax_samples.draw_artist(self.final_text)
             self.canvas.blit(self.fig.bbox)
             self._dirty = False
 
@@ -267,6 +309,12 @@ class GUI:
         self.latest_final = smoothed.get("final", 0)
         self.latest_dwell = smoothed.get("dwell", 0)
         self.latest_dwell_count = smoothed.get("dwell_count", 0)
+
+        self.sample_hist.append({
+            "pred": int(last["prediction"]),
+            "conf": float(last["confidence"]),
+            "consensus": bool(self.latest_consensus),
+        })
 
         new_d = self.latest_final or None
         if new_d != self.last_decision:
@@ -333,17 +381,28 @@ class GUI:
             col = POS_COLOR if w >= 0 else NEG_COLOR
             bar.set_color(to_rgba(col, 1.0 if i == dom else 0.32))
 
-    def _refresh_decision(self):
+    def _refresh_samples(self):
+        for i, (bar, text) in enumerate(zip(self.sample_bars, self.sample_texts)):
+            if i >= len(self.sample_hist):
+                bar.set_alpha(0.0)
+                text.set_text("")
+                continue
+
+            entry = self.sample_hist[i]
+            bar.set_alpha(1.0)
+            if entry["conf"] >= self.conf_floor:
+                bar.set_facecolor(self.decision_colors.get(entry["pred"], MID_COLOR))
+                text.set_text(str(entry["pred"]))
+            else:
+                bar.set_facecolor(MID_COLOR)
+                text.set_text("")
+
         if self.latest_final:
-            self.decision_text.set_text(f"decision: class {self.latest_final}")
-            self.decision_text.set_color(self.decision_colors.get(self.latest_final, "#444"))
-        elif self.latest_consensus and self.latest_decision:
-            self.decision_text.set_text(
-                f"class {self.latest_decision}?  {self.latest_dwell_count}/{self.latest_dwell}")
-            self.decision_text.set_color("#8a8780")
+            self.final_bar.set_facecolor(to_rgba(CONSENSUS_COLOR, 1.0))
+            self.final_text.set_text(str(self.latest_final))
         else:
-            self.decision_text.set_text("decision: —")
-            self.decision_text.set_color("#bbb")
+            self.final_bar.set_facecolor(to_rgba(MID_COLOR, 0.15))
+            self.final_text.set_text("")
 
     def _on_close(self):
         self.root.quit()
