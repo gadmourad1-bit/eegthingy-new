@@ -27,20 +27,30 @@ def run_classifier():
 def run_simulation():
     sim_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation")
     src_dir = os.path.join(sim_dir, "src")
-    print("simulation args (blank prints the sim's help):")
-    print("  --ws-url URL               decision server (default ws://127.0.0.1:8765)")
-    print("  --no-ws                    disable the websocket client")
-    print("  --no-manual-keys           disable arrow-key decisions")
-    print("  --view {third,first,top}   camera (default third)")
     try:
+        subject = input("subject id> ").strip()
+        test = input("test id> ").strip()
+        
+        print("simulation args (blank prints the sim's help):")
+        print("  --ws-url URL               decision server (default ws://127.0.0.1:8765)")
+        print("  --no-ws                    disable the websocket client")
+        print("  --no-manual-keys           disable arrow-key decisions")
+        print("  --view {third,first}   camera (default third)")
+        
         raw = input("args> ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return
 
+    id_args = []
+    if subject:
+        id_args += ["--subject", subject]
+    if test:
+        id_args += ["--test", test]
+
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(p for p in (src_dir, env.get("PYTHONPATH")) if p)
-    subprocess.run([sys.executable, "-m", "tiago_maze", *shlex.split(raw)],
+    subprocess.run([sys.executable, "-m", "tiago_maze", *shlex.split(raw), *id_args],
                    cwd=sim_dir, env=env)
 
 

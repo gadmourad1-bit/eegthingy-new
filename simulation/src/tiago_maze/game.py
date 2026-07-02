@@ -749,6 +749,8 @@ class MazeGame(ShowBase):
         when = when or datetime.now()
         meta = {
             "seed": self.maze.seed,
+            "subject": p.subject_id,
+            "test": p.test_id,
             "timestamp": when.strftime("%Y-%m-%d %H:%M:%S"),
             "completed": self.completed,
             # --- run parameters ---
@@ -781,7 +783,8 @@ class MazeGame(ShowBase):
             key = k if k not in meta else f"user_{k}"
             meta[key] = v if isinstance(v, (str, int, float, bool)) or v is None else json.dumps(v)
         try:
-            path = report.write_report(p.report_dir, meta, self.decision_records, when=when)
+            path = report.write_report(p.report_dir, meta, self.decision_records, when=when,
+                                        subject=p.subject_id, test=p.test_id)
             self._report_written = True
             self.logger.info(f"Wrote CSV report: {path}")
         except OSError as e:
@@ -813,9 +816,12 @@ class MazeGame(ShowBase):
             "forward_speed": p.control.forward_speed,
             "turn_speed": p.control.turn_speed,
             "heading_kp": p.control.heading_kp,
+            "subject": p.subject_id,
+            "test": p.test_id,
         }
         try:
-            path = trace_mod.write_trace(p.report_dir, self._traj, meta, when=when)
+            path = trace_mod.write_trace(p.report_dir, self._traj, meta, when=when,
+                                         subject=p.subject_id, test=p.test_id)
             self._trace_written = True
             self.logger.info(f"Wrote pose trace: {path}")
         except OSError as e:

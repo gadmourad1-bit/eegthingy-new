@@ -16,8 +16,15 @@ or just split the file on the blank line.
 from __future__ import annotations
 
 import csv
+import re
 from datetime import datetime
 from pathlib import Path
+
+
+def _slug(s) -> str:
+    """Filename-safe token; empty/None becomes 'na'."""
+    s = re.sub(r"[^A-Za-z0-9._-]+", "-", str(s or "").strip()).strip("-_.")
+    return s or "na"
 
 # Column order for the per-decision table.
 DECISION_FIELDS = [
@@ -37,9 +44,13 @@ DECISION_FIELDS = [
 ]
 
 
-def report_filename(seed, when: datetime | None = None) -> str:
+def report_filename(seed, when: datetime | None = None,
+                     subject=None, test=None) -> str:
     when = when or datetime.now()
-    return f"tiago_maze_{when.strftime('%Y%m%d_%H%M%S')}_seed{seed}.csv"
+    ts = when.strftime("%Y%m%d_%H%M%S")
+    if subject or test:
+        return f"SUBJECT{_slug(subject)}_TEST{_slug(test)}_SEED{seed}_{ts}.csv"
+    return f"MAZE_{ts}_SEED{seed}.csv"
 
 
 def write_report(
@@ -47,11 +58,13 @@ def write_report(
     meta: dict,
     records: list[dict],
     when: datetime | None = None,
+    subject=None,
+    test=None,
 ) -> Path:
     """Write the summary + per-decision CSV, returning its path."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / report_filename(meta.get("seed"), when)
+    path = out_dir / report_filename(meta.get("seed"), when, subject, test)
 
     with path.open("w", newline="") as f:
         w = csv.writer(f)

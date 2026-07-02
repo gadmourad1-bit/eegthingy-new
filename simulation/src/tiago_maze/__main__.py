@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="directory for CSV reports and NPZ traces")
     ap.add_argument("--replay", default=None, metavar="TRACE.npz",
                     help="replay a recorded NPZ pose trace instead of running live")
+    ap.add_argument("--subject", default="", metavar="ID",
+                    help="subject id, recorded in the report/trace metadata and filename")
+    ap.add_argument("--test", default="", metavar="ID",
+                    help="test id, recorded in the report/trace metadata and filename")
     ap.add_argument("--meta", default=None, metavar="JSON",
                     help='extra run metadata saved into the CSV summary; a JSON '
                          'object (e.g. \'{"subject":"S01","condition":"A"}\') or '
@@ -112,6 +116,8 @@ def build_params(argv: list[str] | None = None) -> GameParams:
     p.control.front_half_angle_deg = args.front_half_angle_deg
     p.control.yaw_tol_deg = args.yaw_tol_deg
     p.control.heading_kp = args.heading_kp
+    p.subject_id = args.subject
+    p.test_id = args.test
     p.manual_keys = not args.no_manual_keys
     p.report_enabled = not args.no_report
     p.record_trace = not args.no_trace

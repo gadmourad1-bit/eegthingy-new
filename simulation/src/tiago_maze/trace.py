@@ -23,12 +23,18 @@ from pathlib import Path
 
 import numpy as np
 
+from .report import _slug
+
 POSE_KEYS = ("t", "x", "y", "yaw", "pitch")
 
 
-def trace_filename(seed, when: datetime | None = None) -> str:
+def trace_filename(seed, when: datetime | None = None,
+                   subject=None, test=None) -> str:
     when = when or datetime.now()
-    return f"tiago_maze_{when.strftime('%Y%m%d_%H%M%S')}_seed{seed}.npz"
+    ts = when.strftime("%Y%m%d_%H%M%S")
+    if subject or test:
+        return f"SUBJECT{_slug(subject)}_TEST{_slug(test)}_SEED{seed}_{ts}.npz"
+    return f"MAZE_{ts}_SEED{seed}.npz"
 
 
 def write_trace(
@@ -36,11 +42,13 @@ def write_trace(
     samples: dict,
     meta: dict,
     when: datetime | None = None,
+    subject=None,
+    test=None,
 ) -> Path:
     """Write the pose trace. ``samples`` maps each POSE_KEYS name to a list."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / trace_filename(meta.get("seed"), when)
+    path = out_dir / trace_filename(meta.get("seed"), when, subject, test)
 
     arrays = {k: np.asarray(samples.get(k, []), dtype=np.float64) for k in POSE_KEYS}
     # Store metadata as 0-d arrays alongside the pose arrays.

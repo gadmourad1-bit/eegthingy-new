@@ -74,6 +74,8 @@ class GameParams:
     record_trace: bool = True           # save an NPZ pose trace (50 ms samples)
     replay: str | None = None           # path to an NPZ trace to replay
     extra_meta: dict = field(default_factory=dict)  # user metadata -> CSV summary
+    subject_id: str = ""                # subject id -> summary + report/trace filename
+    test_id: str = ""                   # test id -> summary + report/trace filename
     offscreen: bool = False             # render offscreen (testing)
     max_frames: int | None = None       # exit after N frames (testing)
     screenshot: str | None = None       # save a screenshot on exit (testing)
