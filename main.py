@@ -1,5 +1,6 @@
 import os
 import ctypes
+import shlex
 import subprocess
 import sys
 
@@ -23,10 +24,31 @@ def run_classifier():
     subprocess.run([sys.executable, script])
 
 
+def run_simulation():
+    sim_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation")
+    src_dir = os.path.join(sim_dir, "src")
+    print("simulation args (blank prints the sim's help):")
+    print("  --ws-url URL               decision server (default ws://127.0.0.1:8765)")
+    print("  --no-ws                    disable the websocket client")
+    print("  --no-manual-keys           disable arrow-key decisions")
+    print("  --view {third,first,top}   camera (default third)")
+    try:
+        raw = input("args> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (src_dir, env.get("PYTHONPATH")) if p)
+    subprocess.run([sys.executable, "-m", "tiago_maze", *shlex.split(raw)],
+                   cwd=sim_dir, env=env)
+
+
 def menu():
     print("=" * 35)
     print(" 1) Data Collector")
     print(" 2) Classifier")
+    print(" 3) Robot Simulation")
     print(" q) Quit")
     print("=" * 35)
     return input("> ").strip().lower()
@@ -44,6 +66,9 @@ def main():
             return
         if choice in ("2", "classifier"):
             run_classifier()
+            return
+        if choice in ("3", "simulation", "sim"):
+            run_simulation()
             return
         if choice in ("q", "quit", "exit"):
             return
