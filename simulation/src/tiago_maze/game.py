@@ -268,7 +268,11 @@ class MazeGame(ShowBase):
         # Walls: hospital corridor panels (skirting + handrail band + white).
         walls_np = self.world_np.attachNewNode("walls")
         wtex = self._wall_texture()
-        for i, w in enumerate(self.maze.walls):
+        # Merge collinear runs so straight walls have no overlapping coplanar
+        # faces (those z-fight); the lidar still uses the per-edge self.maze.walls.
+        render_walls = maze_mod.merge_collinear_walls(
+            self.maze.walls, self.params.maze.wall_thickness)
+        for i, w in enumerate(render_walls):
             node = _textured_wall_node(w.sx, w.sy, w.height, f"wall{i}")
             np_w = walls_np.attachNewNode(node)
             np_w.setPos(w.cx, w.cy, w.height / 2.0)

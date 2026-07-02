@@ -259,3 +259,42 @@ def generate(params: MazeParams | None = None) -> Maze:
     maze.goal_xy = maze.cell_center(cells[-1])
 
     return maze
+
+
+def merge_collinear_walls(walls: list[Wall], thickness: float) -> list[Wall]:
+    """Merge collinear wall boxes that overlap along their length into one box.
+
+    Per-edge walls are over-sized by `thickness` to fill corner gaps, so along a
+    straight run consecutive boxes overlap and their coplanar faces coincide,
+    which z-fights when rendered. Merging each run of overlapping collinear
+    boxes into a single box removes the coincident geometry while covering the
+    exact same footprint (corners, where perpendicular walls meet, stay filled).
+    Only for rendering — the lidar keeps the original per-edge ``walls``.
+    """
+    eps = 1e-6
+    groups: dict[tuple, list[list[float]]] = {}
+    for w in walls:
+        if w.sx <= w.sy:  # thin in x: constant-x plane, spans along y
+            key = ("x", round(w.cx, 6), round(w.height, 6))
+            span = [w.cy - w.sy / 2.0, w.cy + w.sy / 2.0]
+        else:             # thin in y: constant-y plane, spans along x
+            key = ("y", round(w.cy, 6), round(w.height, 6))
+            span = [w.cx - w.sx / 2.0, w.cx + w.sx / 2.0]
+        groups.setdefault(key, []).append(span)
+
+    merged: list[Wall] = []
+    for (orient, plane, height), spans in groups.items():
+        spans.sort()
+        runs = [spans[0]]
+        for lo, hi in spans[1:]:
+            if lo <= runs[-1][1] + eps:
+                runs[-1][1] = max(runs[-1][1], hi)
+            else:
+                runs.append([lo, hi])
+        for lo, hi in runs:
+            mid, length = (lo + hi) / 2.0, hi - lo
+            if orient == "x":
+                merged.append(Wall(cx=plane, cy=mid, sx=thickness, sy=length, height=height))
+            else:
+                merged.append(Wall(cx=mid, cy=plane, sx=length, sy=thickness, height=height))
+    return merged
