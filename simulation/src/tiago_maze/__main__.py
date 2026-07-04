@@ -123,6 +123,11 @@ def build_params(argv: list[str] | None = None) -> GameParams:
     p.record_trace = not args.no_trace
     p.report_dir = args.report_dir
     p.replay = args.replay
+    # A bare --replay name (e.g. from `ls reports/`) resolves against report_dir.
+    if args.replay and not Path(args.replay).exists():
+        alt = Path(args.report_dir) / args.replay
+        if alt.exists():
+            p.replay = str(alt)
     p.offscreen = args.offscreen
     p.max_frames = args.frames
     p.screenshot = args.screenshot
