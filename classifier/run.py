@@ -17,17 +17,11 @@ from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EP
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, confusion_matrix
-from pyriemann.estimation import Covariances
-from pyriemann.tangentspace import TangentSpace
-from pyriemann.utils.mean import mean_riemann
-from pyriemann.utils.base import invsqrtm
 from utils.devices import OpenBCI
 from ws import WebSocket
 from smoother import Smoother
-from gui import GUI
 
 def bandpass(data, sfreq, l_freq, h_freq):
     return mne.filter.filter_data(data, sfreq=sfreq, l_freq=l_freq, h_freq=h_freq,
@@ -138,66 +132,59 @@ class FilterBankCSP(BaseEstimator, ClassifierMixin):
 def build_pipeline():
     return FilterBankCSP()
 
-class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
-    # Per-band Riemannian tangent-space features. Training covariances are recentered
-    # per session (groups) so each session sits at the identity; set_reference() then
-    # recenters live data by an in-context calibration block, absorbing the
-    # train->online distribution shift. X is (n_epochs, n_bands, n_channels, n_times).
-    def fit(self, X, y, groups=None):
-        self.classes_ = np.unique(y)
-        self.cov_, self.ts_, self.ref_white_ = [], [], []
-        feats = []
+class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
+    """Euclidean Alignment (He et al. 2020) + Filter-bank CSP — the online/offline
+    decoder. Per band, each domain is whitened so its mean covariance becomes the
+    identity (R^-1/2, R = arithmetic-mean per-trial covariance), removing
+    subject/session bias before CSP. fit() aligns per group (subject/session);
+    set_reference(X_cal) recomputes the whitener from a calibration batch for the
+    online distribution shift. Defaults to 2 CSP components (best cross-subject
+    transfer). X is (n_epochs, n_bands, n_channels, n_times).
+    """
+
+    def __init__(self, n_components=2):
+        self.n_components = n_components
+
+    @staticmethod
+    def _whitener(Xb):  # Xb (n, C, T) -> R^{-1/2}
+        R = np.einsum("nct,ndt->cd", Xb, Xb) / (len(Xb) * Xb.shape[2])
+        w, V = np.linalg.eigh(R)
+        w = np.clip(w, 1e-12, None)
+        return (V * (w ** -0.5)) @ V.T
+
+    def _align(self, X, whiteners):
+        out = np.empty_like(X, dtype=np.float64)
         for b in range(X.shape[1]):
-            cov = Covariances('lwf')
-            C = cov.transform(X[:, b])
-            ts = TangentSpace('riemann')
-            aligned = ts.fit_transform(self._recenter(C, groups))
-            self.cov_.append(cov)
-            self.ts_.append(ts)
-            self.ref_white_.append(invsqrtm(mean_riemann(C)))  # fallback ref: training mean
-            feats.append(aligned)
-        self.lr_ = LogisticRegression(max_iter=2000)
-        self.lr_.fit(np.hstack(feats), y)
-        self.coef_ = self.lr_.coef_[0]
-        self.band_slices_, self.band_mid_ = _band_decomp(feats, self.coef_)
+            out[:, b] = np.einsum("cd,ndt->nct", whiteners[b], X[:, b])
+        return out
+
+    def fit(self, X, y, groups=None):
+        nb = X.shape[1]
+        self.ref_white_ = [self._whitener(X[:, b]) for b in range(nb)]  # pooled fallback ref
+        if groups is None:
+            Xa = self._align(X, self.ref_white_)
+        else:
+            groups = np.asarray(groups)
+            Xa = np.empty_like(X, dtype=np.float64)
+            for g in np.unique(groups):
+                idx = groups == g
+                Xa[idx] = self._align(X[idx], [self._whitener(X[idx, b]) for b in range(nb)])
+        self.csp_ = FilterBankCSP(n_components=self.n_components).fit(Xa, y)
+        self.classes_ = self.csp_.classes_
         return self
 
     def set_reference(self, X_cal):
-        for b in range(X_cal.shape[1]):
-            self.ref_white_[b] = invsqrtm(mean_riemann(self.cov_[b].transform(X_cal[:, b])))
+        self.ref_white_ = [self._whitener(X_cal[:, b]) for b in range(X_cal.shape[1])]
         return self
 
-    @staticmethod
-    def _recenter(C, groups):
-        if groups is None:
-            W = invsqrtm(mean_riemann(C))
-            return np.array([W @ c @ W for c in C])
-        out = np.empty_like(C)
-        groups = np.asarray(groups)
-        for g in np.unique(groups):
-            idx = groups == g
-            W = invsqrtm(mean_riemann(C[idx]))
-            out[idx] = np.array([W @ c @ W for c in C[idx]])
-        return out
-
-    def _features(self, X):
-        feats = []
-        for b in range(X.shape[1]):
-            C = self.cov_[b].transform(X[:, b])
-            W = self.ref_white_[b]
-            feats.append(self.ts_[b].transform(np.array([W @ c @ W for c in C])))
-        return np.hstack(feats)
-
     def predict(self, X):
-        return self.lr_.predict(self._features(X))
+        return self.csp_.predict(self._align(X, self.ref_white_))
 
     def predict_proba(self, X):
-        return self.lr_.predict_proba(self._features(X))
+        return self.csp_.predict_proba(self._align(X, self.ref_white_))
 
     def analyze(self, X):
-        F = self._features(X)
-        contribs = np.column_stack([F[:, s:e] @ self.coef_[s:e] for (s, e) in self.band_slices_])
-        return self.lr_.predict_proba(F), self.lr_.decision_function(F), contribs - self.band_mid_
+        return self.csp_.analyze(self._align(X, self.ref_white_))
 
 def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
     """Stream `seconds` of EEG while the subject imagines the task in the online
@@ -266,6 +253,23 @@ def select_files(prompt, files):
             continue
         return [files[i] for i in idxs]
 
+def select_device():
+    """USB (real Cyton+Daisy) or the brainflow synthetic board. Returns the
+    `synthetic` flag for OpenBCI, or None if aborted."""
+    print("\nSelect EEG device:")
+    print("  1) USB       — OpenBCI Cyton+Daisy")
+    print("  2) Synthetic — brainflow test board (no hardware)")
+    while True:
+        try:
+            c = input("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if c in ("1", "usb"):
+            return False
+        if c in ("2", "synthetic", "synth"):
+            return True
+        print("pick 1 or 2")
+
 def run_offline():
     files = discover_files()
     if not files:
@@ -290,19 +294,26 @@ def run_offline():
 
     def load_xy(file_list):
         parts = [process_data(f, TARGET_MAPPINGS) for f in file_list]
-        return np.concatenate([X for X, _ in parts]), np.concatenate([y for _, y in parts])
+        X = np.concatenate([X for X, _ in parts])
+        y = np.concatenate([y for _, y in parts])
+        groups = np.concatenate([[i] * len(yy) for i, (_, yy) in enumerate(parts)])
+        return X, y, groups
 
-    X_train, y_train = load_xy(train_files)
-    X_test, y_test = load_xy(test_files)
-
-    clf = build_pipeline()
+    X_train, y_train, g_train = load_xy(train_files)
+    X_test, y_test, _ = load_xy(test_files)
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
-    cv_scores = cross_val_score(build_pipeline(), X_train, y_train, cv=cv)
+    fold_acc = []
+    for tr_i, va_i in cv.split(X_train, y_train):
+        m = EAFilterBankCSP(n_components=2).fit(X_train[tr_i], y_train[tr_i], groups=g_train[tr_i])
+        m.set_reference(X_train[va_i])
+        fold_acc.append(accuracy_score(y_train[va_i], m.predict(X_train[va_i])))
+    fold_acc = np.array(fold_acc)
     print(f"\n5-fold CV on training pool: "
-          f"{cv_scores.mean() * 100:.2f}% +/- {cv_scores.std() * 100:.2f}%")
+          f"{fold_acc.mean() * 100:.2f}% +/- {fold_acc.std() * 100:.2f}%")
 
-    clf.fit(X_train, y_train)
+    clf = EAFilterBankCSP(n_components=2).fit(X_train, y_train, groups=g_train)
+    clf.set_reference(X_test)   # unsupervised EA alignment to the target (no labels)
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
@@ -318,7 +329,11 @@ def run_offline():
     print(f"Motor Imagery Test Accuracy: {acc * 100:.2f}%")
     print("=" * 35)
 
-def run_online():
+def run_online(headless=False):
+    synthetic = select_device()
+    if synthetic is None:
+        return
+
     files = discover_files()
     if not files:
         print(f"no .fif files found in {DATA_DIR}")
@@ -337,22 +352,15 @@ def run_online():
     for f in train_files:
         print(f"  - {os.path.basename(f)}")
 
-    ans = input("\nUse Riemannian recentering? Recommended unless this is the same "
-                "session with the cap untouched since training. [Y/n]: ").strip().lower()
-    use_recenter = ans not in ("n", "no")
-
     parts = [process_data(f, TARGET_MAPPINGS) for f in train_files]
     X_train = np.concatenate([X for X, _ in parts])
     y_train = np.concatenate([y for _, y in parts])
     groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
     n_bands, n_channels, n_times = X_train.shape[1], X_train.shape[2], X_train.shape[3]
 
-    if use_recenter:
-        clf = FilterBankTangentSpace().fit(X_train, y_train, groups=groups)
-    else:
-        clf = build_pipeline().fit(X_train, y_train)
-    print(f"\nTrained {'FB tangent-space (recentered)' if use_recenter else 'FBCSP'} on "
-          f"{len(X_train)} epochs ({n_bands} bands x {n_channels} ch x {n_times} samples).")
+    clf = EAFilterBankCSP(n_components=2).fit(X_train, y_train, groups=groups)
+    print(f"\nTrained EA + FB-CSP (2 comp) on {len(X_train)} epochs "
+          f"({n_bands} bands x {n_channels} ch x {n_times} samples).")
 
     raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
     full_names = raw_full.ch_names
@@ -367,7 +375,7 @@ def run_online():
     ws.start()
     smoother = Smoother(ws)
 
-    bci = OpenBCI(interval=STRIDE_S).open()
+    bci = OpenBCI(interval=STRIDE_S, synthetic=synthetic).open()
     if bci.board is None:
         print("OpenBCI failed to open.")
         ws.stop()
@@ -384,25 +392,27 @@ def run_online():
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
     buffer_lock = threading.Lock()
 
-    print(f"stride: {STRIDE_S}s, classify window: {window_n} samples "
-          f"({window_n / sfreq:.2f}s), buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
+    print(f"mode: {'HEADLESS (no GUI)' if headless else 'GUI'}, stride: {STRIDE_S}s, "
+          f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
+          f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
-    if use_recenter:
-        X_cal = record_calibration(bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_SECONDS)
-        if X_cal is not None and len(X_cal) >= 2:
-            clf.set_reference(X_cal)
-            print(f"recentered on {len(X_cal)} calibration windows.")
-        else:
-            print("calibration produced too little data; falling back to training reference.")
+    X_cal = record_calibration(bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_SECONDS)
+    if X_cal is not None and len(X_cal) >= 2:
+        clf.set_reference(X_cal)
+        print(f"aligned on {len(X_cal)} calibration windows.")
+    else:
+        print("calibration produced too little data; falling back to training reference.")
 
-    _, _, train_signal = clf.analyze(X_train)
-    cls = clf.classes_
-    sig0, sig1 = train_signal[y_train == cls[0]], train_signal[y_train == cls[1]]
-    band_sep = np.abs(sig1.mean(0) - sig0.mean(0)) / (np.sqrt(0.5 * (sig0.var(0) + sig1.var(0))) + 1e-9)
-    band_abs_max = float(np.percentile(np.abs(train_signal), 99)) or 1.0
-
-    gui = GUI(bci, smoother, clf.classes_, sfreq,
-              band_sep=band_sep, band_abs_max=band_abs_max)
+    gui = None
+    if not headless:
+        from gui import GUI
+        _, _, train_signal = clf.analyze(X_train)
+        cls = clf.classes_
+        sig0, sig1 = train_signal[y_train == cls[0]], train_signal[y_train == cls[1]]
+        band_sep = np.abs(sig1.mean(0) - sig0.mean(0)) / (np.sqrt(0.5 * (sig0.var(0) + sig1.var(0))) + 1e-9)
+        band_abs_max = float(np.percentile(np.abs(train_signal), 99)) or 1.0
+        gui = GUI(bci, smoother, clf.classes_, sfreq,
+                  band_sep=band_sep, band_abs_max=band_abs_max)
 
     prev_print_t = None
 
@@ -428,12 +438,15 @@ def run_online():
         bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
         window = np.stack(bands, axis=0)[np.newaxis, ...]
 
-        proba, score, band_sig = clf.analyze(window)
-        probs = proba[0]
+        if headless:
+            probs = clf.predict_proba(window)[0]
+        else:
+            proba, score, band_sig = clf.analyze(window)
+            probs = proba[0]
+            gui.push_decision(float(score[0]), band_sig[0])
         idx = int(np.argmax(probs))
         pred = clf.classes_[idx]
         conf = probs[idx]
-        gui.push_decision(float(score[0]), band_sig[0])
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
 
         decision, consensus, final = smoother.add(
@@ -453,7 +466,12 @@ def run_online():
     bci.start()
 
     try:
-        gui.mainloop()
+        if headless:
+            print("\nrunning headless — decisions broadcasting over websocket. Ctrl-C to stop.\n")
+            while True:
+                time.sleep(1)
+        else:
+            gui.mainloop()
     except KeyboardInterrupt:
         print("\nStopping…")
     finally:
@@ -464,12 +482,18 @@ def run_online():
 def menu():
     print("=" * 35)
     print(" 1) Offline  (pick training/testing files)")
-    print(" 2) Online   (train on all files, classify live)")
+    print(" 2) Online   (live, with GUI)")
+    print(" 3) Online   (headless, no GUI — for SBC)")
     print(" q) Quit")
     print("=" * 35)
     return input("> ").strip().lower()
 
 def main():
+    argv = sys.argv[1:]
+    if argv and argv[0] in ('--headless', '--no-gui', '-H'):
+        run_online(headless=True)
+        return
+
     while True:
         try:
             choice = menu()
@@ -481,7 +505,10 @@ def main():
             run_offline()
             return
         if choice in ('2', 'online'):
-            run_online()
+            run_online(headless=False)
+            return
+        if choice in ('3', 'headless', 'online-headless'):
+            run_online(headless=True)
             return
         if choice in ('q', 'quit', 'exit'):
             return

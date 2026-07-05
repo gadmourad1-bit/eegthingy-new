@@ -4,18 +4,30 @@ import ctypes
 import threading
 import serial
 import numpy as np
-import requests
-import pyglet
 
-from sdk.vernier.bindings import GoIOSDK, SKIP_CMD_ID_START_MEASUREMENTS, SKIP_CMD_ID_STOP_MEASUREMENTS
+try:
+    import requests
+except ImportError:
+    requests = None
+try:
+    import pyglet
+except ImportError:
+    pyglet = None
+try:
+    from sdk.vernier.bindings import GoIOSDK, SKIP_CMD_ID_START_MEASUREMENTS, SKIP_CMD_ID_STOP_MEASUREMENTS
+except Exception:
+    GoIOSDK = None
+    SKIP_CMD_ID_START_MEASUREMENTS = SKIP_CMD_ID_STOP_MEASUREMENTS = None
+
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 from serial import Serial
 from serial.tools import list_ports
 
 # OpenBCI Cyton Daisy Board
 class OpenBCI:
-    def __init__(self, interval=1.0):
+    def __init__(self, interval=1.0, synthetic=False):
         self.interval = interval
+        self.synthetic = synthetic
         self.board = None
         self.filter = None
         self.worker = 0
@@ -64,10 +76,12 @@ class OpenBCI:
         try:
             params = BrainFlowInputParams()
             params.timeout = 30
-            params.serial_port = self.find_serial_port()
- 
-            temp_board = BoardShim(BoardIds.CYTON_DAISY_BOARD.value, params)
-            #temp_board = BoardShim(BoardIds.SYNTHETIC_BOARD.value, params)
+            if self.synthetic:
+                board_id = BoardIds.SYNTHETIC_BOARD.value
+            else:
+                params.serial_port = self.find_serial_port()
+                board_id = BoardIds.CYTON_DAISY_BOARD.value
+            temp_board = BoardShim(board_id, params)
             temp_board.prepare_session()
             time.sleep(1)
             temp_board.start_stream()
