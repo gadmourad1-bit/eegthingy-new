@@ -454,7 +454,7 @@ def run_online(headless=False):
             confidence=conf,
             probs=dict(zip(clf.classes_, probs)),
         )
-        tag = decision if consensus else "—"
+        tag = f"{decision} (dwell {smoother.dwell_count}/{smoother.dwell})" if consensus else "—"
         commit = f"  ✓ COMMIT {final}" if final else ""
         now = time.perf_counter()
         dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0

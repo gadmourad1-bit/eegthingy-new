@@ -277,7 +277,7 @@ def main():
         now = time.perf_counter()
         dt = (now - prev_t[0]) * 1000 if prev_t[0] is not None else 0.0
         prev_t[0] = now
-        tag = decision if consensus else "—"
+        tag = f"{decision} (dwell {smoother.dwell_count}/{smoother.dwell})" if consensus else "—"
         commit = f"  ✓ COMMIT {final}" if final else ""
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         bd = ", ".join(f"{int(c)}={p*100:.0f}%" for c, p in zip(model.classes, proba))
