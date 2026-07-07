@@ -19,5 +19,7 @@ WORKDIR /app
 COPY lean_online.py ws.py smoother.py /app/
 
 # One self-contained executable at /app/dist/lean-online.
+# --collect-all serial: pyserial is imported lazily (auto-detect), so force-bundle it.
 RUN pyinstaller --onefile --name lean-online \
-        --collect-all brainflow --paths /app /app/lean_online.py
+        --collect-all brainflow --collect-all serial \
+        --paths /app /app/lean_online.py

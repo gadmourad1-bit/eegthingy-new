@@ -93,6 +93,31 @@ class OpenBCI:
         self._recording = False
         self._thread = None
 
+    @staticmethod
+    def _find_serial_port():
+        """Auto-detect the OpenBCI USB dongle: try the 'v' firmware handshake on
+        each serial port, else fall back to the first /dev/ttyUSB*/ttyACM*."""
+        try:
+            from serial import Serial
+            from serial.tools import list_ports
+        except Exception:
+            return ""
+        ports = list(list_ports.comports())
+        for p in ports:
+            try:
+                s = Serial(port=p.device, baudrate=115200, timeout=5)
+                s.write(b"v"); time.sleep(2)
+                line = s.read(s.in_waiting or 1).decode("utf-8", "replace")
+                s.close()
+                if "OpenBCI" in line:
+                    return p.device
+            except Exception:
+                pass
+        for p in ports:
+            if "ttyUSB" in p.device or "ttyACM" in p.device:
+                return p.device
+        return ""
+
     def open(self):
         try:
             params = BrainFlowInputParams()
@@ -100,9 +125,13 @@ class OpenBCI:
             if self.synthetic:
                 bid = BoardIds.SYNTHETIC_BOARD.value
             else:
-                if self.serial_port:
-                    params.serial_port = self.serial_port
+                params.serial_port = self.serial_port or self._find_serial_port()
                 bid = BoardIds.CYTON_DAISY_BOARD.value
+                if params.serial_port:
+                    print(f"serial port: {params.serial_port}")
+                else:
+                    print("no OpenBCI dongle auto-detected — check `ls /dev/ttyUSB*`, "
+                          "or pass --serial-port /dev/ttyUSB0")
             board = BoardShim(bid, params)
             board.prepare_session()
             time.sleep(1)
