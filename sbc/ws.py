@@ -3,12 +3,14 @@ import json
 import threading
 import websockets
 
+from config import WS_HOST, WS_PORT
+
 
 class WebSocket:
     """Broadcast-only websocket server: decisions go out to any connected client
     (e.g. the robot). Runs its asyncio loop on a background thread."""
 
-    def __init__(self, host="0.0.0.0", port=8765):
+    def __init__(self, host=WS_HOST, port=WS_PORT):
         self.host = host
         self.port = port
         self.clients = set()

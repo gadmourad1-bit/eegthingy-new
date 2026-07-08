@@ -23,9 +23,7 @@ mne.set_log_level("ERROR")
 
 import run as R
 from config import (FB_BANDS, FB_TRANS, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING,
-                    STRIDE_S, FILTER_WARMUP_S, CALIBRATION_SECONDS,
-                    SMOOTHER_N, SMOOTHER_M, SMOOTHER_CONF_FLOOR, SMOOTHER_DWELL,
-                    TARGET_MAPPINGS)
+                    STRIDE_S, FILTER_WARMUP_S, CALIBRATION_SECONDS, TARGET_MAPPINGS)
 
 OUT = os.path.join(os.path.dirname(__file__), "model.npz")
 
@@ -85,7 +83,6 @@ def main():
         warmup_s=FILTER_WARMUP_S, stride_s=STRIDE_S, calibration_seconds=CALIBRATION_SECONDS,
         channels_targets=np.array(EEG_CHANNELS_TARGETS),
         channels_mapping=np.array(EEG_CHANNELS_MAPPING),
-        smoother=np.array([SMOOTHER_N, SMOOTHER_M, SMOOTHER_CONF_FLOOR, SMOOTHER_DWELL], dtype=float),
     )
     kb = os.path.getsize(OUT) / 1024
     print(f"\nexported -> {OUT}  ({kb:.1f} KB)")

@@ -2,7 +2,7 @@ import time
 import threading
 from collections import deque, Counter
 
-from config import SMOOTHER_N, SMOOTHER_M, SMOOTHER_CONF_FLOOR, SMOOTHER_DWELL
+from config import SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL, NORM_CONF_FLOOR
 
 
 class Smoother:
@@ -21,7 +21,7 @@ class Smoother:
     via the websocket's broadcast() method.
     """
 
-    def __init__(self, ws, n=SMOOTHER_N, m=SMOOTHER_M, conf_floor=SMOOTHER_CONF_FLOOR,
+    def __init__(self, ws, n=SMOOTHER_N, m=SMOOTHER_M, conf_floor=NORM_CONF_FLOOR,
                  dwell=SMOOTHER_DWELL):
         if m > n:
             raise ValueError(f"M ({m}) cannot exceed N ({n})")

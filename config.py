@@ -22,8 +22,9 @@ LABELS = {1: "left_hand", 2: "right_hand", 3: "left_foot", 4: "right_foot"}
 PHASES = {1: "prep", 2: "plan", 3: "task", 4: "rest"}
 SMOOTHER_N = 5
 SMOOTHER_M = 4
-SMOOTHER_CONF_FLOOR = 0.90
 SMOOTHER_DWELL = 3
+NORM_CONF_FLOOR = 0.80
+LOW_CONF_WARN = 0.40
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,

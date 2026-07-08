@@ -1,5 +1,5 @@
 # Builds a standalone Linux/arm64 binary of the lean SBC decoder.
-# Runs natively on an Apple-Silicon Mac (no emulation). See build.sh.
+# Build context is the repo root (see build.sh) so config.py is available.
 FROM --platform=linux/arm64 python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,7 +16,7 @@ RUN git clone --depth 1 https://github.com/brainflow-dev/brainflow.git /brainflo
 RUN pip install --no-cache-dir numpy scipy websockets pyserial pyinstaller
 
 WORKDIR /app
-COPY lean_online.py ws.py smoother.py /app/
+COPY sbc/lean_online.py sbc/ws.py sbc/smoother.py config.py /app/
 
 # One self-contained executable at /app/dist/lean-online.
 # --collect-all serial: pyserial is imported lazily (auto-detect), so force-bundle it.

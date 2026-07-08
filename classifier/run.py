@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX,
                     FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S, STRIDE_S,
-                    CALIBRATION_SECONDS, TARGET_MAPPINGS)
+                    CALIBRATION_SECONDS, TARGET_MAPPINGS, NORM_CONF_FLOOR, LOW_CONF_WARN)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -185,6 +185,60 @@ class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
 
     def analyze(self, X):
         return self.csp_.analyze(self._align(X, self.ref_white_))
+
+class ConfidenceCalibrator:
+    """Unsupervised per-side confidence calibration (no labels, model frozen).
+
+    Cross-subject the LDA log-odds shift and one class often reads weaker than the
+    other, so a fixed absolute floor stalls the weak hand. This centers the log-odds
+    at the subject's own boundary (median of the calibration scores) and normalizes
+    each class by its own high-percentile ceiling — so a genuine weak-hand MI reads
+    as confident relative to *that* hand's ceiling. Seeded from the calibration
+    block; the ceilings then only rise during the run (tracking the subject's best
+    MI per side, robust to single artifacts). `center=False` keeps the raw boundary
+    (predictions unchanged) and calibrates confidence only.
+    """
+
+    def __init__(self, pct=90.0, rise=0.05, min_count=10, min_ceil=1e-3, center=False):
+        self.pct, self.rise = pct, rise
+        self.min_count, self.min_ceil = min_count, min_ceil
+        self.use_center = center
+        self.center = 0.0
+        self.ceil_pos = 1.0
+        self.ceil_neg = 1.0
+
+    def seed(self, scores):
+        scores = np.asarray(scores, dtype=float)
+        if scores.size == 0:
+            return self
+        if self.use_center:
+            self.center = float(np.median(scores))
+        z = scores - self.center
+        pos, neg = z[z >= 0], -z[z < 0]
+        has_pos, has_neg = pos.size >= self.min_count, neg.size >= self.min_count
+        if has_pos:
+            self.ceil_pos = max(self.min_ceil, float(np.percentile(pos, self.pct)))
+        if has_neg:
+            self.ceil_neg = max(self.min_ceil, float(np.percentile(neg, self.pct)))
+        if not has_pos:
+            self.ceil_pos = self.ceil_neg
+        if not has_neg:
+            self.ceil_neg = self.ceil_pos
+        return self
+
+    def score(self, s):
+        """s = raw log-odds toward classes_[1]. Returns (side, conf): side +1 ->
+        classes_[1], -1 -> classes_[0]; conf in [0,1] vs that side's rising ceiling."""
+        z = s - self.center
+        mag = abs(z)
+        if z >= 0:
+            if mag > self.ceil_pos:
+                self.ceil_pos += self.rise * (mag - self.ceil_pos)
+            return 1, min(1.0, mag / max(self.ceil_pos, self.min_ceil))
+        if mag > self.ceil_neg:
+            self.ceil_neg += self.rise * (mag - self.ceil_neg)
+        return -1, min(1.0, mag / max(self.ceil_neg, self.min_ceil))
+
 
 def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
     """Stream `seconds` of EEG while the subject imagines the task in the online
@@ -373,7 +427,7 @@ def run_online(headless=False):
 
     ws = WebSocket()
     ws.start()
-    smoother = Smoother(ws)
+    smoother = Smoother(ws, conf_floor=NORM_CONF_FLOOR)
 
     bci = OpenBCI(interval=STRIDE_S, synthetic=synthetic).open()
     if bci.board is None:
@@ -396,12 +450,19 @@ def run_online(headless=False):
           f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
           f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
+    # EA alignment + unsupervised confidence calibration from the same block.
+    calibrator = ConfidenceCalibrator()
     X_cal = record_calibration(bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_SECONDS)
     if X_cal is not None and len(X_cal) >= 2:
         clf.set_reference(X_cal)
-        print(f"aligned on {len(X_cal)} calibration windows.")
+        pcal = clf.predict_proba(X_cal)
+        scal = np.log(np.clip(pcal[:, 1], 1e-9, 1.0) / np.clip(pcal[:, 0], 1e-9, 1.0))
+        calibrator.seed(scal)
+        print(f"aligned + confidence-calibrated on {len(X_cal)} windows "
+              f"(boundary={calibrator.center:+.2f}, ceil[{clf.classes_[1]}]={calibrator.ceil_pos:.2f}, "
+              f"ceil[{clf.classes_[0]}]={calibrator.ceil_neg:.2f})")
     else:
-        print("calibration produced too little data; falling back to training reference.")
+        print("calibration produced too little data; training reference, uncalibrated confidence.")
 
     gui = None
     if not headless:
@@ -444,9 +505,11 @@ def run_online(headless=False):
             proba, score, band_sig = clf.analyze(window)
             probs = proba[0]
             gui.push_decision(float(score[0]), band_sig[0])
-        idx = int(np.argmax(probs))
-        pred = clf.classes_[idx]
-        conf = probs[idx]
+        # subject-normalized confidence; s = log-odds toward classes_[1]
+        s = float(np.log(max(probs[1], 1e-9) / max(probs[0], 1e-9)))
+        side, conf = calibrator.score(s)
+        pred = clf.classes_[1] if side > 0 else clf.classes_[0]
+        low = "  ⚠ LOW" if conf < LOW_CONF_WARN else ""
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
 
         decision, consensus, final = smoother.add(
@@ -460,7 +523,7 @@ def run_online(headless=False):
         dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0
         prev_print_t = now
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  raw: {pred}  conf: {conf*100:.1f}%  [{breakdown}]  → smoothed: {tag}{commit}")
+        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%{low}  [{breakdown}]  → {tag}{commit}")
 
     bci.callback = on_chunk
     bci.start()

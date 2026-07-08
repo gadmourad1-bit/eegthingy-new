@@ -23,6 +23,9 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..")))   # repo root, for config.py (dev + build)
+from config import (NORM_CONF_FLOOR, LOW_CONF_WARN, WS_HOST, WS_PORT,
+                    SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL)
 from ws import WebSocket
 from smoother import Smoother
 
@@ -32,6 +35,54 @@ def default_model_path():
     can be swapped to retrain a subject without rebuilding the binary."""
     base = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else _HERE
     return os.path.join(base, "model.npz")
+
+
+class ConfidenceCalibrator:
+    """Unsupervised per-side confidence calibration (no labels, model frozen).
+    Centers the log-odds at the subject's own boundary and normalizes each class by
+    its own high-percentile ceiling (seeded from the calibration block; ceilings
+    then only rise during the run). Fixes cross-subject confidence asymmetry so a
+    genuine weak-hand MI isn't judged on the strong hand's scale."""
+
+    def __init__(self, pct=90.0, rise=0.05, min_count=10, min_ceil=1e-3, center=False):
+        self.pct, self.rise = pct, rise
+        self.min_count, self.min_ceil = min_count, min_ceil
+        self.use_center = center
+        self.center = 0.0
+        self.ceil_pos = 1.0
+        self.ceil_neg = 1.0
+
+    def seed(self, scores):
+        scores = np.asarray(scores, dtype=float)
+        if scores.size == 0:
+            return self
+        if self.use_center:
+            self.center = float(np.median(scores))
+        z = scores - self.center
+        pos, neg = z[z >= 0], -z[z < 0]
+        has_pos, has_neg = pos.size >= self.min_count, neg.size >= self.min_count
+        if has_pos:
+            self.ceil_pos = max(self.min_ceil, float(np.percentile(pos, self.pct)))
+        if has_neg:
+            self.ceil_neg = max(self.min_ceil, float(np.percentile(neg, self.pct)))
+        if not has_pos:
+            self.ceil_pos = self.ceil_neg
+        if not has_neg:
+            self.ceil_neg = self.ceil_pos
+        return self
+
+    def score(self, s):
+        """s = raw log-odds toward classes[1]. Returns (side, conf): +1 -> classes[1],
+        -1 -> classes[0]; conf in [0,1] vs that side's rising ceiling."""
+        z = s - self.center
+        mag = abs(z)
+        if z >= 0:
+            if mag > self.ceil_pos:
+                self.ceil_pos += self.rise * (mag - self.ceil_pos)
+            return 1, min(1.0, mag / max(self.ceil_pos, self.min_ceil))
+        if mag > self.ceil_neg:
+            self.ceil_neg += self.rise * (mag - self.ceil_neg)
+        return -1, min(1.0, mag / max(self.ceil_neg, self.min_ceil))
 
 
 # ----------------------------- model + inference -----------------------------
@@ -51,8 +102,6 @@ class Model:
         self.warmup_s = float(d["warmup_s"])
         self.stride_s = float(d["stride_s"])
         self.cal_seconds = int(d["calibration_seconds"])
-        sm = d["smoother"]
-        self.sm_n, self.sm_m, self.sm_conf, self.sm_dwell = int(sm[0]), int(sm[1]), float(sm[2]), int(sm[3])
         self.ref_white = None  # set by calibration
 
     def bandbank(self, buf):
@@ -70,14 +119,17 @@ class Model:
     def set_reference(self, cal_windows):   # cal_windows (n, nb, C, T)
         self.ref_white = [self._whitener(cal_windows[:, b]) for b in range(self.nb)]
 
-    def proba(self, fb_window):             # fb_window (nb, C, T) -> proba (2,)
+    def logit(self, fb_window):             # fb_window (nb, C, T) -> log-odds toward classes[1]
         feats = []
         for b in range(self.nb):
             al = self.ref_white[b] @ fb_window[b]                 # EA whiten
             proj = self.csp_filters[b] @ al                       # CSP spatial filter
             feats.append(np.log((proj ** 2).mean(axis=1)))        # log-variance
         f = np.concatenate(feats)
-        p1 = 1.0 / (1.0 + np.exp(-(f @ self.lda_coef + self.lda_intercept)))
+        return float(f @ self.lda_coef + self.lda_intercept)
+
+    def proba(self, fb_window):             # fb_window (nb, C, T) -> proba (2,)
+        p1 = 1.0 / (1.0 + np.exp(-self.logit(fb_window)))
         return np.array([1.0 - p1, p1])
 
 
@@ -219,8 +271,12 @@ def main():
     ap.add_argument("--no-calibration", action="store_true")
     ap.add_argument("--cal-seconds", type=int, default=None, help="override calibration length")
     ap.add_argument("--run-seconds", type=int, default=None, help="exit after N seconds (testing)")
-    ap.add_argument("--ws-host", default="0.0.0.0")
-    ap.add_argument("--ws-port", type=int, default=8765)
+    ap.add_argument("--ws-host", default=WS_HOST)
+    ap.add_argument("--ws-port", type=int, default=WS_PORT)
+    ap.add_argument("--conf-floor", type=float, default=NORM_CONF_FLOOR,
+                    help="commit gate on normalized confidence (lower = faster/looser commits)")
+    ap.add_argument("--warn-conf", type=float, default=LOW_CONF_WARN,
+                    help="flag windows below this normalized confidence as near-guessing")
     args = ap.parse_args()
 
     model_path = args.model or default_model_path()
@@ -252,7 +308,7 @@ def main():
     print(f"device: {device}")
 
     ws = WebSocket(args.ws_host, args.ws_port); ws.start()
-    smoother = Smoother(ws, model.sm_n, model.sm_m, model.sm_conf, model.sm_dwell)
+    smoother = Smoother(ws, SMOOTHER_N, SMOOTHER_M, args.conf_floor, SMOOTHER_DWELL)
 
     bci = OpenBCI(model.stride_s, synthetic=synthetic, serial_port=args.serial_port).open()
     if bci.board is None:
@@ -267,12 +323,17 @@ def main():
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
     buffer_lock = threading.Lock()
 
+    calibrator = ConfidenceCalibrator()
     if not args.no_calibration:
         cal_secs = args.cal_seconds if args.cal_seconds is not None else model.cal_seconds
         cal = calibrate(bci, model, train_idx, window_n, warmup_n, cal_secs)
         if cal is not None and len(cal) >= 2:
             model.set_reference(cal)
-            print(f"aligned on {len(cal)} calibration windows.")
+            scal = np.array([model.logit(w) for w in cal])
+            calibrator.seed(scal)
+            print(f"aligned + confidence-calibrated on {len(cal)} windows "
+                  f"(boundary={calibrator.center:+.2f}, ceil[{int(model.classes[1])}]={calibrator.ceil_pos:.2f}, "
+                  f"ceil[{int(model.classes[0])}]={calibrator.ceil_neg:.2f}).")
         else:
             print("calibration produced too little data — cannot align; aborting.")
             bci.close(); ws.stop(); return
@@ -296,9 +357,13 @@ def main():
                 return
             buf = buffer.copy()
 
-        proba = model.proba(model.bandbank(buf))
-        idx = int(np.argmax(proba))
-        pred = int(model.classes[idx]); conf = float(proba[idx])
+        fb = model.bandbank(buf)
+        s = model.logit(fb)
+        p1 = 1.0 / (1.0 + np.exp(-s))
+        proba = np.array([1.0 - p1, p1])
+        side, conf = calibrator.score(s)
+        pred = int(model.classes[1] if side > 0 else model.classes[0])
+        low = "  ⚠ LOW" if conf < args.warn_conf else ""
         decision, consensus, final = smoother.add(
             prediction=pred, confidence=conf,
             probs={int(c): float(p) for c, p in zip(model.classes, proba)})
@@ -310,7 +375,7 @@ def main():
         commit = f"  ✓ COMMIT {final}" if final else ""
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         bd = ", ".join(f"{int(c)}={p*100:.0f}%" for c, p in zip(model.classes, proba))
-        print(f"[{ts}  Δ{dt:5.0f}ms]  raw:{pred} {conf*100:4.0f}%  [{bd}]  → {tag}{commit}")
+        print(f"[{ts}  Δ{dt:5.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%{low}  [{bd}]  → {tag}{commit}")
 
     bci.callback = on_chunk
     bci.start()
