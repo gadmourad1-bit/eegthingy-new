@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX,
                     FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S, STRIDE_S,
-                    CALIBRATION_SECONDS, TARGET_MAPPINGS, NORM_CONF_FLOOR, LOW_CONF_WARN)
+                    CALIBRATION_SECONDS, TARGET_MAPPINGS, NORM_CONF_FLOOR)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -509,7 +509,6 @@ def run_online(headless=False):
         s = float(np.log(max(probs[1], 1e-9) / max(probs[0], 1e-9)))
         side, conf = calibrator.score(s)
         pred = clf.classes_[1] if side > 0 else clf.classes_[0]
-        low = "  ⚠ LOW" if conf < LOW_CONF_WARN else ""
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
 
         decision, consensus, final = smoother.add(
@@ -523,7 +522,7 @@ def run_online(headless=False):
         dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0
         prev_print_t = now
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%{low}  [{breakdown}]  → {tag}{commit}")
+        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%  [{breakdown}]  → {tag}{commit}")
 
     bci.callback = on_chunk
     bci.start()

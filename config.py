@@ -24,7 +24,6 @@ SMOOTHER_N = 5
 SMOOTHER_M = 4
 SMOOTHER_DWELL = 3
 NORM_CONF_FLOOR = 0.80
-LOW_CONF_WARN = 0.40
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,

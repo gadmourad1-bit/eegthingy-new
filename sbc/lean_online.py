@@ -24,7 +24,7 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..")))   # repo root, for config.py (dev + build)
-from config import (NORM_CONF_FLOOR, LOW_CONF_WARN, WS_HOST, WS_PORT,
+from config import (NORM_CONF_FLOOR, WS_HOST, WS_PORT,
                     SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL)
 from ws import WebSocket
 from smoother import Smoother
@@ -275,8 +275,6 @@ def main():
     ap.add_argument("--ws-port", type=int, default=WS_PORT)
     ap.add_argument("--conf-floor", type=float, default=NORM_CONF_FLOOR,
                     help="commit gate on normalized confidence (lower = faster/looser commits)")
-    ap.add_argument("--warn-conf", type=float, default=LOW_CONF_WARN,
-                    help="flag windows below this normalized confidence as near-guessing")
     args = ap.parse_args()
 
     model_path = args.model or default_model_path()
@@ -363,7 +361,6 @@ def main():
         proba = np.array([1.0 - p1, p1])
         side, conf = calibrator.score(s)
         pred = int(model.classes[1] if side > 0 else model.classes[0])
-        low = "  ⚠ LOW" if conf < args.warn_conf else ""
         decision, consensus, final = smoother.add(
             prediction=pred, confidence=conf,
             probs={int(c): float(p) for c, p in zip(model.classes, proba)})
@@ -375,7 +372,7 @@ def main():
         commit = f"  ✓ COMMIT {final}" if final else ""
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         bd = ", ".join(f"{int(c)}={p*100:.0f}%" for c, p in zip(model.classes, proba))
-        print(f"[{ts}  Δ{dt:5.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%{low}  [{bd}]  → {tag}{commit}")
+        print(f"[{ts}  Δ{dt:5.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%  [{bd}]  → {tag}{commit}")
 
     bci.callback = on_chunk
     bci.start()
