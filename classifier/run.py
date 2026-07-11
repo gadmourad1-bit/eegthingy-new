@@ -18,8 +18,18 @@ from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, confusion_matrix
+
+try:   # optional: enables the Riemannian decoder; EA works without pyriemann
+    from pyriemann.estimation import Covariances
+    from pyriemann.tangentspace import TangentSpace
+    from pyriemann.utils.mean import mean_riemann
+    from pyriemann.utils.base import invsqrtm
+    _HAS_PYRIEMANN = True
+except ImportError:
+    _HAS_PYRIEMANN = False
 from utils.devices import OpenBCI
 from ws import WebSocket
 from smoother import Smoother
@@ -188,6 +198,70 @@ class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
         return self.csp_.analyze(self._align(X, self.ref_white_))
 
 
+class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
+    """Riemannian alternative to EAFilterBankCSP (same fit/set_reference/predict_proba/
+    analyze API). Per band: LWF covariances, Riemannian recentering per group (each
+    session recentred to the identity), tangent-space projection, logistic regression.
+    set_reference() recentres live data on an in-context calibration block, absorbing the
+    train->online shift. X is (n_epochs, n_bands, n_channels, n_times)."""
+
+    def fit(self, X, y, groups=None):
+        self.classes_ = np.unique(y)
+        self.cov_, self.ts_, self.ref_white_ = [], [], []
+        feats = []
+        for b in range(X.shape[1]):
+            cov = Covariances('lwf')
+            C = cov.transform(X[:, b])
+            ts = TangentSpace('riemann')
+            aligned = ts.fit_transform(self._recenter(C, groups))
+            self.cov_.append(cov)
+            self.ts_.append(ts)
+            self.ref_white_.append(invsqrtm(mean_riemann(C)))   # fallback ref: training mean
+            feats.append(aligned)
+        self.lr_ = LogisticRegression(max_iter=2000)
+        self.lr_.fit(np.hstack(feats), y)
+        self.coef_ = self.lr_.coef_[0]
+        self.band_slices_, self.band_mid_ = _band_decomp(feats, self.coef_)
+        return self
+
+    def set_reference(self, X_cal):
+        for b in range(X_cal.shape[1]):
+            self.ref_white_[b] = invsqrtm(mean_riemann(self.cov_[b].transform(X_cal[:, b])))
+        return self
+
+    @staticmethod
+    def _recenter(C, groups):
+        if groups is None:
+            W = invsqrtm(mean_riemann(C))
+            return np.array([W @ c @ W for c in C])
+        out = np.empty_like(C)
+        groups = np.asarray(groups)
+        for g in np.unique(groups):
+            idx = groups == g
+            W = invsqrtm(mean_riemann(C[idx]))
+            out[idx] = np.array([W @ c @ W for c in C[idx]])
+        return out
+
+    def _features(self, X):
+        feats = []
+        for b in range(X.shape[1]):
+            C = self.cov_[b].transform(X[:, b])
+            W = self.ref_white_[b]
+            feats.append(self.ts_[b].transform(np.array([W @ c @ W for c in C])))
+        return np.hstack(feats)
+
+    def predict(self, X):
+        return self.lr_.predict(self._features(X))
+
+    def predict_proba(self, X):
+        return self.lr_.predict_proba(self._features(X))
+
+    def analyze(self, X):
+        F = self._features(X)
+        contribs = np.column_stack([F[:, s:e] @ self.coef_[s:e] for (s, e) in self.band_slices_])
+        return self.lr_.predict_proba(F), self.lr_.decision_function(F), contribs - self.band_mid_
+
+
 class BoundaryRecenter:
     """Unsupervised adaptive decision-boundary recentering (no labels, model frozen).
 
@@ -307,6 +381,33 @@ def select_device():
             return True
         print("pick 1 or 2")
 
+def select_decoder():
+    """EA + FB-CSP (fast, default) or the Riemannian tangent-space decoder. Returns a
+    decoder kind string ('ea' | 'riemann')."""
+    print("\nSelect decoder:")
+    print("  1) EA + FB-CSP     — Euclidean Alignment (fast, default)")
+    print("  2) Riemann tangent — Riemannian alignment + tangent space + LR")
+    while True:
+        try:
+            c = input("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            c = ""
+        if c in ("", "1", "ea"):
+            return "ea"
+        if c in ("2", "riemann", "ra", "tangent"):
+            if not _HAS_PYRIEMANN:
+                print("pyriemann not installed — using EA (`uv add pyriemann` to enable Riemann).")
+                return "ea"
+            return "riemann"
+        print("pick 1 or 2")
+
+def make_decoder(kind):
+    """Instantiate the chosen decoder; both share the fit/set_reference/predict_proba/analyze API."""
+    return FilterBankTangentSpace() if kind == "riemann" else EAFilterBankCSP(n_components=2)
+
+def decoder_label(kind):
+    return "Riemann tangent-space (RA)" if kind == "riemann" else "EA + FB-CSP (2 comp)"
+
 def run_offline():
     files = discover_files()
     if not files:
@@ -329,6 +430,8 @@ def run_offline():
     if overlap:
         print(f"warning: file(s) used in both train and test: {[os.path.basename(f) for f in overlap]}")
 
+    decoder_kind = select_decoder()
+
     def load_xy(file_list):
         parts = [process_data(f, TARGET_MAPPINGS) for f in file_list]
         X = np.concatenate([X for X, _ in parts])
@@ -342,15 +445,15 @@ def run_offline():
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
     fold_acc = []
     for tr_i, va_i in cv.split(X_train, y_train):
-        m = EAFilterBankCSP(n_components=2).fit(X_train[tr_i], y_train[tr_i], groups=g_train[tr_i])
+        m = make_decoder(decoder_kind).fit(X_train[tr_i], y_train[tr_i], groups=g_train[tr_i])
         m.set_reference(X_train[va_i])
         fold_acc.append(accuracy_score(y_train[va_i], m.predict(X_train[va_i])))
     fold_acc = np.array(fold_acc)
-    print(f"\n5-fold CV on training pool: "
+    print(f"\n[{decoder_label(decoder_kind)}]  5-fold CV on training pool: "
           f"{fold_acc.mean() * 100:.2f}% +/- {fold_acc.std() * 100:.2f}%")
 
-    clf = EAFilterBankCSP(n_components=2).fit(X_train, y_train, groups=g_train)
-    clf.set_reference(X_test)   # unsupervised EA alignment to the target (no labels)
+    clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=g_train)
+    clf.set_reference(X_test)   # unsupervised alignment to the target (no labels)
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
@@ -404,6 +507,8 @@ def run_online(headless=False):
     if synthetic is None:
         return
 
+    decoder_kind = select_decoder()
+
     files = discover_files()
     if not files:
         print(f"no .fif files found in {DATA_DIR}")
@@ -428,8 +533,8 @@ def run_online(headless=False):
     groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
     n_bands, n_channels, n_times = X_train.shape[1], X_train.shape[2], X_train.shape[3]
 
-    clf = EAFilterBankCSP(n_components=2).fit(X_train, y_train, groups=groups)
-    print(f"\nTrained EA + FB-CSP (2 comp) on {len(X_train)} epochs "
+    clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=groups)
+    print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs "
           f"({n_bands} bands x {n_channels} ch x {n_times} samples).")
 
     raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
