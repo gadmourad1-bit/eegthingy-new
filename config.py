@@ -23,7 +23,10 @@ PHASES = {1: "prep", 2: "plan", 3: "task", 4: "rest"}
 SMOOTHER_N = 5
 SMOOTHER_M = 4
 SMOOTHER_DWELL = 3
-NORM_CONF_FLOOR = 0.80
+CONF_FLOOR = 0.85    # commit gate on the recentered confidence; also acts as the rest dead-zone
+RECENTER_ALPHA = 0.01       # EMA rate for the adaptive decision boundary (applied on rest-like windows only)
+RECENTER_CLAMP = 2.0        # max drift of the neutral from its calibration seed, in log-odds
+RECENTER_REST_CONF = 0.65   # windows below this recentered confidence are 'rest' and update the neutral
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,

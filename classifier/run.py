@@ -11,9 +11,10 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from brainflow.board_shim import BoardShim
-from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EPOCH_REJECT, EPOCH_TMIN, EPOCH_TMAX,
-                    FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S, STRIDE_S,
-                    CALIBRATION_SECONDS, TARGET_MAPPINGS, NORM_CONF_FLOOR)
+from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
+                    EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
+                    STRIDE_S, CALIBRATION_SECONDS, TARGET_MAPPINGS, CONF_FLOOR,
+                    RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -186,58 +187,40 @@ class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
     def analyze(self, X):
         return self.csp_.analyze(self._align(X, self.ref_white_))
 
-class ConfidenceCalibrator:
-    """Unsupervised per-side confidence calibration (no labels, model frozen).
 
-    Cross-subject the LDA log-odds shift and one class often reads weaker than the
-    other, so a fixed absolute floor stalls the weak hand. This centers the log-odds
-    at the subject's own boundary (median of the calibration scores) and normalizes
-    each class by its own high-percentile ceiling — so a genuine weak-hand MI reads
-    as confident relative to *that* hand's ceiling. Seeded from the calibration
-    block; the ceilings then only rise during the run (tracking the subject's best
-    MI per side, robust to single artifacts). `center=False` keeps the raw boundary
-    (predictions unchanged) and calibrates confidence only.
+class BoundaryRecenter:
+    """Unsupervised adaptive decision-boundary recentering (no labels, model frozen).
+
+    EA aligns covariance but not *where* a subject's log-odds sit, so cross-subject the
+    LDA boundary is offset (left-skew; rest reads as a confident class) and drifts
+    within a session (the decoder sticks). Seed the neutral from the calibration block,
+    then track it from rest-like windows ONLY (so sustained real MI never pulls it),
+    clamped near the seed so it can't run away. Decisions and confidence are taken on
+    the recentered margin z = s - center; gating that at CONF_FLOOR gives a rest
+    dead-zone for free (idle sits near the boundary -> low confidence -> no commit).
     """
 
-    def __init__(self, pct=90.0, rise=0.05, min_count=10, min_ceil=1e-3, center=False):
-        self.pct, self.rise = pct, rise
-        self.min_count, self.min_ceil = min_count, min_ceil
-        self.use_center = center
+    def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
+        self.alpha = alpha
+        self.clamp = clamp
+        self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
         self.center = 0.0
-        self.ceil_pos = 1.0
-        self.ceil_neg = 1.0
+        self.seed_center = 0.0
 
     def seed(self, scores):
         scores = np.asarray(scores, dtype=float)
-        if scores.size == 0:
-            return self
-        if self.use_center:
-            self.center = float(np.median(scores))
-        z = scores - self.center
-        pos, neg = z[z >= 0], -z[z < 0]
-        has_pos, has_neg = pos.size >= self.min_count, neg.size >= self.min_count
-        if has_pos:
-            self.ceil_pos = max(self.min_ceil, float(np.percentile(pos, self.pct)))
-        if has_neg:
-            self.ceil_neg = max(self.min_ceil, float(np.percentile(neg, self.pct)))
-        if not has_pos:
-            self.ceil_pos = self.ceil_neg
-        if not has_neg:
-            self.ceil_neg = self.ceil_pos
+        if scores.size:
+            self.center = self.seed_center = float(np.median(scores))
         return self
 
-    def score(self, s):
-        """s = raw log-odds toward classes_[1]. Returns (side, conf): side +1 ->
-        classes_[1], -1 -> classes_[0]; conf in [0,1] vs that side's rising ceiling."""
-        z = s - self.center
-        mag = abs(z)
-        if z >= 0:
-            if mag > self.ceil_pos:
-                self.ceil_pos += self.rise * (mag - self.ceil_pos)
-            return 1, min(1.0, mag / max(self.ceil_pos, self.min_ceil))
-        if mag > self.ceil_neg:
-            self.ceil_neg += self.rise * (mag - self.ceil_neg)
-        return -1, min(1.0, mag / max(self.ceil_neg, self.min_ceil))
+    def update(self, s):
+        """Track the neutral from rest-like windows only, clamped to seed +/- clamp;
+        return the recentered margin z = s - center."""
+        if abs(s - self.center) < self.rest_margin:
+            self.center += self.alpha * (s - self.center)
+            lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
+            self.center = min(hi, max(lo, self.center))
+        return s - self.center
 
 
 def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
@@ -383,6 +366,39 @@ def run_offline():
     print(f"Motor Imagery Test Accuracy: {acc * 100:.2f}%")
     print("=" * 35)
 
+RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
+
+def save_online_recording(eeg_chunks, sfreq, out_path):
+    """Concatenate the raw EEG chunks captured during a live run (channels x samples,
+    microvolts) into an MNE Raw and save as *_raw.fif — same format as the training
+    files, so the session can be replayed and analyzed with the existing pipeline."""
+    if not eeg_chunks:
+        print("recording: no EEG captured, nothing saved")
+        return
+    data = np.hstack(eeg_chunks).astype(np.float64) / 1e6          # microvolts -> volts
+    n_ch = data.shape[0]
+    ch_names = (list(EEG_CHANNELS_MAPPING) if n_ch == len(EEG_CHANNELS_MAPPING)
+                else [f"EEG{i + 1}" for i in range(n_ch)])
+    raw = mne.io.RawArray(data, mne.create_info(ch_names, sfreq, ["eeg"] * n_ch), verbose=False)
+    if "DEAD" in ch_names:
+        raw.set_channel_types({"DEAD": "misc"})
+    raw.set_montage("standard_1020", on_missing="ignore")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    raw.save(out_path, overwrite=True, verbose=False)
+    print(f"recording saved: {raw.n_times} samples ({raw.n_times / sfreq:.1f}s) -> {out_path}")
+
+def save_decision_log(rows, out_path):
+    """Per-window decoder trace (time, raw log-odds, adaptive center, recentered margin,
+    prediction, confidence, committed class) for offline analysis of skew/drift."""
+    if not rows:
+        return
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as f:
+        f.write("time,log_odds,center,margin,pred,conf,committed\n")
+        for r in rows:
+            f.write(",".join(str(x) for x in r) + "\n")
+    print(f"decision log saved: {len(rows)} rows -> {out_path}")
+
 def run_online(headless=False):
     synthetic = select_device()
     if synthetic is None:
@@ -427,7 +443,7 @@ def run_online(headless=False):
 
     ws = WebSocket()
     ws.start()
-    smoother = Smoother(ws, conf_floor=NORM_CONF_FLOOR)
+    smoother = Smoother(ws, conf_floor=CONF_FLOOR)
 
     bci = OpenBCI(interval=STRIDE_S, synthetic=synthetic).open()
     if bci.board is None:
@@ -450,19 +466,17 @@ def run_online(headless=False):
           f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
           f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
-    # EA alignment + unsupervised confidence calibration from the same block.
-    calibrator = ConfidenceCalibrator()
+    # EA alignment + decision-boundary recentering, both from the calibration block.
+    recenter = BoundaryRecenter()
     X_cal = record_calibration(bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_SECONDS)
     if X_cal is not None and len(X_cal) >= 2:
         clf.set_reference(X_cal)
         pcal = clf.predict_proba(X_cal)
         scal = np.log(np.clip(pcal[:, 1], 1e-9, 1.0) / np.clip(pcal[:, 0], 1e-9, 1.0))
-        calibrator.seed(scal)
-        print(f"aligned + confidence-calibrated on {len(X_cal)} windows "
-              f"(boundary={calibrator.center:+.2f}, ceil[{clf.classes_[1]}]={calibrator.ceil_pos:.2f}, "
-              f"ceil[{clf.classes_[0]}]={calibrator.ceil_neg:.2f})")
+        recenter.seed(scal)
+        print(f"aligned on {len(X_cal)} windows (boundary center={recenter.center:+.2f})")
     else:
-        print("calibration produced too little data; training reference, uncalibrated confidence.")
+        print("calibration produced too little data; using pooled training reference, center=0.")
 
     gui = None
     if not headless:
@@ -477,6 +491,11 @@ def run_online(headless=False):
 
     prev_print_t = None
 
+    # GUI live mode: record the whole session (raw EEG + decoder trace) for replay/analysis.
+    record = not headless
+    rec_eeg, rec_rows = [], []
+    rec_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     def on_chunk(chunk):
         nonlocal buffer, prev_print_t
         eeg_all = chunk[bci.eeg, :]
@@ -485,6 +504,9 @@ def run_online(headless=False):
         if max(train_idx) >= eeg_all.shape[0]:
             print(f"(got {eeg_all.shape[0]} channels, need index {max(train_idx)})")
             return
+
+        if record:
+            rec_eeg.append(eeg_all.astype(np.float32))     # all EEG channels, microvolts
 
         eeg = eeg_all[train_idx, :].astype(np.float64, copy=False) / 1e6
 
@@ -500,15 +522,17 @@ def run_online(headless=False):
         window = np.stack(bands, axis=0)[np.newaxis, ...]
 
         if headless:
-            probs = clf.predict_proba(window)[0]
+            probs_raw = clf.predict_proba(window)[0]
         else:
             proba, score, band_sig = clf.analyze(window)
-            probs = proba[0]
+            probs_raw = proba[0]
             gui.push_decision(float(score[0]), band_sig[0])
-        # subject-normalized confidence; s = log-odds toward classes_[1]
-        s = float(np.log(max(probs[1], 1e-9) / max(probs[0], 1e-9)))
-        side, conf = calibrator.score(s)
-        pred = clf.classes_[1] if side > 0 else clf.classes_[0]
+        s = float(np.log(max(probs_raw[1], 1e-9) / max(probs_raw[0], 1e-9)))
+        z = recenter.update(s)                            # recenter on the subject's neutral
+        p1 = 1.0 / (1.0 + np.exp(-z))
+        probs = np.array([1.0 - p1, p1])                  # recentered probabilities
+        pred = clf.classes_[int(np.argmax(probs))]
+        conf = float(np.max(probs))
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
 
         decision, consensus, final = smoother.add(
@@ -522,10 +546,17 @@ def run_online(headless=False):
         dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0
         prev_print_t = now
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%  [{breakdown}]  → {tag}{commit}")
+        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  conf {conf*100:3.0f}% (ctr {recenter.center:+.1f})  [{breakdown}]  → {tag}{commit}")
+
+        if record:
+            rec_rows.append((ts, f"{s:.4f}", f"{recenter.center:.4f}", f"{z:.4f}",
+                             int(pred), f"{conf:.4f}", int(final)))
 
     bci.callback = on_chunk
     bci.start()
+
+    if record:
+        print(f"\n📼 recording session → recordings/online_{rec_stamp}_raw.fif (+ _decisions.csv)")
 
     try:
         if headless:
@@ -540,6 +571,9 @@ def run_online(headless=False):
         bci.stop()
         bci.close()
         ws.stop()
+        if record:
+            save_online_recording(rec_eeg, sfreq, os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_raw.fif"))
+            save_decision_log(rec_rows, os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_decisions.csv"))
 
 def menu():
     print("=" * 35)

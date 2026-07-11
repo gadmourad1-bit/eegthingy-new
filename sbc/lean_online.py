@@ -24,8 +24,8 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..")))   # repo root, for config.py (dev + build)
-from config import (NORM_CONF_FLOOR, WS_HOST, WS_PORT,
-                    SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL)
+from config import (CONF_FLOOR, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF,
+                    WS_HOST, WS_PORT, SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL)
 from ws import WebSocket
 from smoother import Smoother
 
@@ -37,52 +37,36 @@ def default_model_path():
     return os.path.join(base, "model.npz")
 
 
-class ConfidenceCalibrator:
-    """Unsupervised per-side confidence calibration (no labels, model frozen).
-    Centers the log-odds at the subject's own boundary and normalizes each class by
-    its own high-percentile ceiling (seeded from the calibration block; ceilings
-    then only rise during the run). Fixes cross-subject confidence asymmetry so a
-    genuine weak-hand MI isn't judged on the strong hand's scale."""
+class BoundaryRecenter:
+    """Unsupervised adaptive decision-boundary recentering (no labels, model frozen).
+    EA aligns covariance but not *where* a subject's log-odds sit, so cross-subject the
+    boundary is offset (left-skew; rest reads as a confident class) and drifts within a
+    session (the decoder sticks). Seed the neutral from the calibration block, then track
+    it from rest-like windows ONLY (so sustained real MI never pulls it), clamped near the
+    seed. Decisions and confidence use the recentered margin z = s - center; gating that
+    at CONF_FLOOR gives a rest dead-zone for free."""
 
-    def __init__(self, pct=90.0, rise=0.05, min_count=10, min_ceil=1e-3, center=False):
-        self.pct, self.rise = pct, rise
-        self.min_count, self.min_ceil = min_count, min_ceil
-        self.use_center = center
+    def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
+        self.alpha = alpha
+        self.clamp = clamp
+        self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
         self.center = 0.0
-        self.ceil_pos = 1.0
-        self.ceil_neg = 1.0
+        self.seed_center = 0.0
 
     def seed(self, scores):
         scores = np.asarray(scores, dtype=float)
-        if scores.size == 0:
-            return self
-        if self.use_center:
-            self.center = float(np.median(scores))
-        z = scores - self.center
-        pos, neg = z[z >= 0], -z[z < 0]
-        has_pos, has_neg = pos.size >= self.min_count, neg.size >= self.min_count
-        if has_pos:
-            self.ceil_pos = max(self.min_ceil, float(np.percentile(pos, self.pct)))
-        if has_neg:
-            self.ceil_neg = max(self.min_ceil, float(np.percentile(neg, self.pct)))
-        if not has_pos:
-            self.ceil_pos = self.ceil_neg
-        if not has_neg:
-            self.ceil_neg = self.ceil_pos
+        if scores.size:
+            self.center = self.seed_center = float(np.median(scores))
         return self
 
-    def score(self, s):
-        """s = raw log-odds toward classes[1]. Returns (side, conf): +1 -> classes[1],
-        -1 -> classes[0]; conf in [0,1] vs that side's rising ceiling."""
-        z = s - self.center
-        mag = abs(z)
-        if z >= 0:
-            if mag > self.ceil_pos:
-                self.ceil_pos += self.rise * (mag - self.ceil_pos)
-            return 1, min(1.0, mag / max(self.ceil_pos, self.min_ceil))
-        if mag > self.ceil_neg:
-            self.ceil_neg += self.rise * (mag - self.ceil_neg)
-        return -1, min(1.0, mag / max(self.ceil_neg, self.min_ceil))
+    def update(self, s):
+        """Track the neutral from rest-like windows only, clamped to seed +/- clamp;
+        return the recentered margin z = s - center."""
+        if abs(s - self.center) < self.rest_margin:
+            self.center += self.alpha * (s - self.center)
+            lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
+            self.center = min(hi, max(lo, self.center))
+        return s - self.center
 
 
 # ----------------------------- model + inference -----------------------------
@@ -273,7 +257,7 @@ def main():
     ap.add_argument("--run-seconds", type=int, default=None, help="exit after N seconds (testing)")
     ap.add_argument("--ws-host", default=WS_HOST)
     ap.add_argument("--ws-port", type=int, default=WS_PORT)
-    ap.add_argument("--conf-floor", type=float, default=NORM_CONF_FLOOR,
+    ap.add_argument("--conf-floor", type=float, default=CONF_FLOOR,
                     help="commit gate on normalized confidence (lower = faster/looser commits)")
     args = ap.parse_args()
 
@@ -321,17 +305,14 @@ def main():
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
     buffer_lock = threading.Lock()
 
-    calibrator = ConfidenceCalibrator()
+    recenter = BoundaryRecenter()
     if not args.no_calibration:
         cal_secs = args.cal_seconds if args.cal_seconds is not None else model.cal_seconds
         cal = calibrate(bci, model, train_idx, window_n, warmup_n, cal_secs)
         if cal is not None and len(cal) >= 2:
             model.set_reference(cal)
-            scal = np.array([model.logit(w) for w in cal])
-            calibrator.seed(scal)
-            print(f"aligned + confidence-calibrated on {len(cal)} windows "
-                  f"(boundary={calibrator.center:+.2f}, ceil[{int(model.classes[1])}]={calibrator.ceil_pos:.2f}, "
-                  f"ceil[{int(model.classes[0])}]={calibrator.ceil_neg:.2f}).")
+            recenter.seed(np.array([model.logit(w) for w in cal]))
+            print(f"aligned on {len(cal)} windows (boundary center={recenter.center:+.2f})")
         else:
             print("calibration produced too little data — cannot align; aborting.")
             bci.close(); ws.stop(); return
@@ -357,10 +338,11 @@ def main():
 
         fb = model.bandbank(buf)
         s = model.logit(fb)
-        p1 = 1.0 / (1.0 + np.exp(-s))
-        proba = np.array([1.0 - p1, p1])
-        side, conf = calibrator.score(s)
-        pred = int(model.classes[1] if side > 0 else model.classes[0])
+        z = recenter.update(s)                            # recenter on the subject's neutral
+        p1 = 1.0 / (1.0 + np.exp(-z))
+        proba = np.array([1.0 - p1, p1])                  # recentered
+        pred = int(model.classes[int(np.argmax(proba))])
+        conf = float(np.max(proba))
         decision, consensus, final = smoother.add(
             prediction=pred, confidence=conf,
             probs={int(c): float(p) for c, p in zip(model.classes, proba)})
@@ -372,7 +354,7 @@ def main():
         commit = f"  ✓ COMMIT {final}" if final else ""
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         bd = ", ".join(f"{int(c)}={p*100:.0f}%" for c, p in zip(model.classes, proba))
-        print(f"[{ts}  Δ{dt:5.0f}ms]  {pred}  cal-conf {conf*100:3.0f}%  [{bd}]  → {tag}{commit}")
+        print(f"[{ts}  Δ{dt:5.0f}ms]  {pred}  conf {conf*100:3.0f}% (ctr {recenter.center:+.1f})  [{bd}]  → {tag}{commit}")
 
     bci.callback = on_chunk
     bci.start()
