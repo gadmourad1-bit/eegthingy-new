@@ -1,11 +1,11 @@
 {
-    "id": 3,
-    "run": 4,
+    "id": 10,
+    "run": 8,
     "cues": 60,
     "time_prep": 10,
     "time_plan": 2,
     "time_task": 2,
     "time_rest": 2,
     "time_buffer": 0.1,
-    "run_type": "Testing"
+    "run_type": "Training"
 }
