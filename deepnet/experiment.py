@@ -28,8 +28,9 @@ import torch
 from scipy.optimize import minimize_scalar
 from sklearn.metrics import balanced_accuracy_score
 
+from .augment import left_right_swap_index
 from .baselines import EAFilterBankCSP, RiemannianTangentLogistic
-from .config import DEFAULT_DATA_CONFIG, EPOCH_WINDOWS, PROJECT_ROOT, SUBJECT_RUNS
+from .config import CHANNELS, DEFAULT_DATA_CONFIG, EPOCH_WINDOWS, PROJECT_ROOT, SUBJECT_RUNS
 from .data import SessionData, SessionKey, dataset_contract, load_sessions
 from .engine import (
     CovarianceDataset,
@@ -64,6 +65,31 @@ class BenchmarkConfig:
     weight_decay: float = 1e-3
     device: str = "auto"
     commit_confidence: float = 0.85
+    # GeoAdaptNet accuracy knobs.  All defaults reproduce the locked schema-v2
+    # baseline exactly; they are fit/selection-side only and never touch the
+    # outer test recording, so raising them cannot leak.
+    deep_supervision_weight: float = 0.0
+    residual_gate_init: float = 0.02
+    exclude_gate_from_weight_decay: bool = False
+    select_metric: str = "loss"
+    label_smoothing: float = 0.05
+    # Seed the residual BiMaps from supervised CSP filters fitted on the inner
+    # training recordings only (never rec3/rec4).  The single mechanism EA-FBCSP
+    # has that the net's random projection lacks.
+    csp_warm_start: bool = False
+    # Fit-side covariance augmentation (training recordings only): left/right
+    # electrode swap + label flip, and log-Euclidean same-class mixup.
+    lr_swap_prob: float = 0.0
+    mixup_alpha: float = 0.0
+    # Covariance shrinkage estimator applied identically to every window at fit
+    # and deploy: "fixed" (1e-3) or adaptive per-window "oas".
+    covariance_shrinkage_method: str = "fixed"
+    # Reproducible-but-slower by default; the fast profile flips this.
+    deterministic: bool = True
+    # Test-time mirror augmentation: average the prediction on each window with
+    # the label-flipped prediction on its left/right-mirrored covariance.
+    # Unsupervised and applied identically at deploy; costs 2x inference.
+    tta_mirror: bool = False
 
     def __post_init__(self) -> None:
         if self.window not in EPOCH_WINDOWS:
@@ -74,6 +100,59 @@ class BenchmarkConfig:
             raise ValueError("epoch, patience, and batch settings must be positive")
         if not 0.5 <= self.commit_confidence <= 1.0:
             raise ValueError("commit_confidence must be in [0.5, 1]")
+        if self.deep_supervision_weight < 0.0:
+            raise ValueError("deep_supervision_weight must be non-negative")
+        if not 0.0 < self.residual_gate_init < 1.0:
+            raise ValueError("residual_gate_init must be strictly between 0 and 1")
+        if self.select_metric not in {"loss", "balanced_accuracy", "blend"}:
+            raise ValueError("select_metric must be loss, balanced_accuracy, or blend")
+
+
+def _mirror_covariances(covariances: np.ndarray, swap_index: np.ndarray) -> np.ndarray:
+    """Apply the left/right channel permutation ``P C P^T`` to a (..., C, C) batch."""
+
+    return covariances[..., swap_index, :][..., :, swap_index]
+
+
+def _tta_mirror_probabilities(
+    model: Any,
+    aligned: np.ndarray,
+    labels: np.ndarray,
+    zero_reference: np.ndarray,
+    swap_index: np.ndarray,
+    *,
+    device: str,
+    batch_size: int,
+    branch: str = "full",
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Model probabilities averaged with the label-flipped mirrored prediction.
+
+    Mirroring swaps the left/right sensors, so the mirror's class-2 probability
+    estimates the original window's class-1 probability.  Averaging the two views
+    is a label-free, deploy-consistent variance reducer at 2x inference cost.
+    """
+
+    probs, intent = predict_proba(
+        model,
+        CovarianceDataset(aligned, labels, log_references=zero_reference),
+        device=device,
+        batch_size=batch_size,
+        branch=branch,
+    )
+    mirror_probs, mirror_intent = predict_proba(
+        model,
+        CovarianceDataset(
+            _mirror_covariances(aligned, swap_index), labels, log_references=zero_reference
+        ),
+        device=device,
+        batch_size=batch_size,
+        branch=branch,
+    )
+    positive = 0.5 * (probs[:, 1] + (1.0 - mirror_probs[:, 1]))
+    averaged = np.stack([1.0 - positive, positive], axis=1)
+    if intent is not None and mirror_intent is not None:
+        intent = 0.5 * (intent + mirror_intent)  # rest/task is mirror-invariant
+    return averaged, intent
 
 
 def _symmetrize(matrix: np.ndarray) -> np.ndarray:
@@ -282,6 +361,22 @@ def _training_config(config: BenchmarkConfig, seed: int) -> TrainConfig:
         patience=config.patience,
         seed=seed,
         device=config.device,
+        label_smoothing=config.label_smoothing,
+        deep_supervision_weight=config.deep_supervision_weight,
+        exclude_gate_from_weight_decay=config.exclude_gate_from_weight_decay,
+        select_metric=config.select_metric,
+        lr_swap_prob=config.lr_swap_prob,
+        mixup_alpha=config.mixup_alpha,
+        deterministic=config.deterministic,
+    )
+
+
+def _build_geoadapt(config: BenchmarkConfig) -> GeoAdaptNet:
+    """Construct GeoAdaptNet with the run's accuracy knobs (defaults = baseline)."""
+
+    return GeoAdaptNet(
+        auxiliary_intent=config.include_rest,
+        residual_gate_init=config.residual_gate_init,
     )
 
 
@@ -305,8 +400,18 @@ def _score_geoadapt(
     validation_keep = np.setdiff1d(validation_rows, validation_cal, assume_unique=False)
 
     train_config = _training_config(config, seed)
-    set_reproducible_seed(seed)
-    selection_model = GeoAdaptNet(auxiliary_intent=config.include_rest)
+    set_reproducible_seed(seed, deterministic=config.deterministic)
+    selection_model = _build_geoadapt(config)
+    if config.csp_warm_start:
+        # Leakage guard: CSP may only see the inner training recordings.  This
+        # mirrors exactly the rows the EA-FBCSP baseline fits on for this fold.
+        csp_rows = np.asarray(inner_rows)
+        forbidden = np.union1d(np.asarray(validation_rows), np.asarray(test_rows))
+        if np.intersect1d(csp_rows, forbidden).size:
+            raise AssertionError("CSP warm-start rows leaked into validation/test")
+        selection_model.init_bimaps_from_csp(
+            data.covariances[csp_rows], data.labels[csp_rows]
+        )
     selected = train_model(
         selection_model,
         CovarianceDataset(
@@ -414,15 +519,27 @@ def _score_geoadapt(
     covariance_adapter.calibrate(data.covariances[test_cal])
     aligned_calibration = covariance_adapter.transform(data.covariances[test_cal])
     zero_reference = np.zeros(aligned_calibration.shape[1:], dtype=np.float32)
-    calibration_probabilities, calibration_intent = predict_proba(
-        final_model,
-        CovarianceDataset(
+    swap_index = np.asarray(left_right_swap_index(CHANNELS), dtype=np.int64)
+    if config.tta_mirror:
+        calibration_probabilities, calibration_intent = _tta_mirror_probabilities(
+            final_model,
             aligned_calibration,
             data.labels[test_cal],
-            log_references=zero_reference,
-        ),
-        device=config.device,
-    )
+            zero_reference,
+            swap_index,
+            device=config.device,
+            batch_size=256,
+        )
+    else:
+        calibration_probabilities, calibration_intent = predict_proba(
+            final_model,
+            CovarianceDataset(
+                aligned_calibration,
+                data.labels[test_cal],
+                log_references=zero_reference,
+            ),
+            device=config.device,
+        )
     calibration_anchor_probabilities, _ = predict_proba(
         final_model,
         CovarianceDataset(
@@ -472,17 +589,29 @@ def _score_geoadapt(
         for row in ordered_live:
             raw_covariance = data.covariances[row]
             aligned = stream_adapter.covariance.transform(raw_covariance)
-            window_probabilities, intent_probability = predict_proba(
-                final_model,
-                CovarianceDataset(
+            if config.tta_mirror:
+                window_probabilities, intent_probability = _tta_mirror_probabilities(
+                    final_model,
                     aligned[np.newaxis],
                     np.asarray([data.labels[row]]),
-                    log_references=zero_reference,
-                ),
-                device=config.device,
-                batch_size=1,
-                branch=branch,
-            )
+                    zero_reference,
+                    swap_index,
+                    device=config.device,
+                    batch_size=1,
+                    branch=branch,
+                )
+            else:
+                window_probabilities, intent_probability = predict_proba(
+                    final_model,
+                    CovarianceDataset(
+                        aligned[np.newaxis],
+                        np.asarray([data.labels[row]]),
+                        log_references=zero_reference,
+                    ),
+                    device=config.device,
+                    batch_size=1,
+                    branch=branch,
+                )
             positive = float(np.clip(window_probabilities[0, 1], 1e-7, 1.0 - 1e-7))
             score = math.log(positive) - math.log1p(-positive)
             rest_probability = (
@@ -836,7 +965,10 @@ def run_benchmark(
         raise ValueError(f"invalid subjects: {sorted(invalid_subjects)}")
     keys = [SessionKey(subject, run) for subject in subjects for run in SUBJECT_RUNS[subject]]
     data_config = replace(
-        DEFAULT_DATA_CONFIG, window_name=config.window, include_rest=config.include_rest
+        DEFAULT_DATA_CONFIG,
+        window_name=config.window,
+        include_rest=config.include_rest,
+        covariance_shrinkage_method=config.covariance_shrinkage_method,
     )
     data = load_sessions(keys, data_config)
     input_contract = dataset_contract(data, data_config)
@@ -950,6 +1082,30 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--weight-decay", type=float, default=1e-3)
     benchmark.add_argument("--device", default="auto")
     benchmark.add_argument("--commit-confidence", type=float, default=0.85)
+    # GeoAdaptNet accuracy knobs (defaults reproduce the locked baseline).
+    benchmark.add_argument("--deep-supervision-weight", type=float, default=0.0)
+    benchmark.add_argument("--residual-gate-init", type=float, default=0.02)
+    benchmark.add_argument("--exclude-gate-weight-decay", action="store_true")
+    benchmark.add_argument(
+        "--select-metric", choices=("loss", "balanced_accuracy", "blend"), default="loss"
+    )
+    benchmark.add_argument("--label-smoothing", type=float, default=0.05)
+    benchmark.add_argument("--csp-warm-start", action="store_true")
+    benchmark.add_argument("--lr-swap-prob", type=float, default=0.0)
+    benchmark.add_argument("--mixup-alpha", type=float, default=0.0)
+    benchmark.add_argument(
+        "--covariance-shrinkage-method", choices=("fixed", "oas"), default="fixed"
+    )
+    benchmark.add_argument(
+        "--fast",
+        action="store_true",
+        help="faster iteration: non-deterministic kernels + TF32 matmul (accuracy ~unchanged)",
+    )
+    benchmark.add_argument(
+        "--tta-mirror",
+        action="store_true",
+        help="test-time left/right mirror averaging at inference (2x inference cost)",
+    )
     benchmark.add_argument(
         "--output", type=Path,
         default=PROJECT_ROOT / "deepnet" / "results" / "chronological.json",
@@ -971,6 +1127,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     subjects = _csv_ints(args.subjects, all_values=SUBJECT_RUNS)
     seeds = _csv_ints(args.seeds)
+    # The fast profile drops determinism and enables TF32.  It deliberately does
+    # NOT change the batch size: at this data scale a larger batch measurably
+    # hurts accuracy, so batch stays a separate, explicit knob.
     config = BenchmarkConfig(
         window=args.window,
         include_rest=not args.task_only,
@@ -982,6 +1141,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         weight_decay=args.weight_decay,
         device=args.device,
         commit_confidence=args.commit_confidence,
+        deep_supervision_weight=args.deep_supervision_weight,
+        residual_gate_init=args.residual_gate_init,
+        exclude_gate_from_weight_decay=args.exclude_gate_weight_decay,
+        select_metric=args.select_metric,
+        label_smoothing=args.label_smoothing,
+        csp_warm_start=args.csp_warm_start,
+        lr_swap_prob=args.lr_swap_prob,
+        mixup_alpha=args.mixup_alpha,
+        covariance_shrinkage_method=args.covariance_shrinkage_method,
+        deterministic=not args.fast,
+        tta_mirror=args.tta_mirror,
     )
     payload = run_benchmark(
         subjects=subjects,

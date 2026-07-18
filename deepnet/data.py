@@ -248,10 +248,31 @@ def annotation_label(description: str, *, include_rest: bool = False) -> int | N
     return None
 
 
+def _oas_coefficient(
+    covariance: NDArray[np.float64], n_times: int, n_channels: int
+) -> NDArray[np.float64]:
+    """Per-window Oracle Approximating Shrinkage intensity (Chen et al. 2010).
+
+    Returns the shrinkage weight toward the scaled-identity target ``tr(S)/p * I``
+    for each window, computed only from that window's own sample covariance -- an
+    unsupervised, per-window estimator (no label use, no cross-window pooling).
+    """
+
+    trace = np.trace(covariance, axis1=-2, axis2=-1)
+    trace_sq = trace * trace
+    frob_sq = np.sum(covariance * covariance, axis=(-2, -1))  # tr(S^2), S symmetric
+    numerator = (1.0 - 2.0 / n_channels) * frob_sq + trace_sq
+    denominator = (n_times + 1.0 - 2.0 / n_channels) * (frob_sq - trace_sq / n_channels)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rho = np.where(denominator > 0.0, numerator / denominator, 1.0)
+    return np.clip(rho, 0.0, 1.0)
+
+
 def make_spd_covariances(
     epochs: NDArray[np.floating[Any]],
     *,
     shrinkage: float = 1e-3,
+    method: str = "fixed",
     demean: bool = True,
     dtype: str | np.dtype[Any] | None = None,
 ) -> NDArray[np.floating[Any]]:
@@ -261,6 +282,12 @@ def make_spd_covariances(
     time)``.  Computation is always float64; output defaults to the input's float32
     or float64 precision.  A scale-aware final diagonal floor protects degenerate
     synthetic/flat windows without overwhelming EEG covariances measured in volts.
+
+    ``method`` selects the shrinkage weight toward the scaled-identity target:
+    ``"fixed"`` uses the constant ``shrinkage``; ``"oas"`` computes an adaptive
+    per-window Oracle-Approximating-Shrinkage weight (floored at ``shrinkage`` so
+    the SPD guarantee is preserved).  Both are unsupervised and applied identically
+    at fit and deploy time.
     """
 
     values = np.asarray(epochs)
@@ -272,6 +299,8 @@ def make_spd_covariances(
         raise ValueError("epochs contain NaN or infinity")
     if not 0.0 < shrinkage <= 1.0:
         raise ValueError("shrinkage must be in (0, 1]")
+    if method not in {"fixed", "oas"}:
+        raise ValueError("method must be 'fixed' or 'oas'")
 
     if dtype is None:
         output_dtype = np.dtype(np.float64 if values.dtype == np.float64 else np.float32)
@@ -288,9 +317,12 @@ def make_spd_covariances(
     n_channels = covariance.shape[-1]
     trace_scale = np.trace(covariance, axis1=-2, axis2=-1) / float(n_channels)
     identity = np.eye(n_channels, dtype=np.float64)
-    covariance = (1.0 - shrinkage) * covariance + (
-        shrinkage * trace_scale[..., None, None] * identity
-    )
+    if method == "oas":
+        rho = _oas_coefficient(covariance, n_times, n_channels)
+        rho = np.maximum(rho, shrinkage)[..., None, None]
+    else:
+        rho = shrinkage
+    covariance = (1.0 - rho) * covariance + rho * trace_scale[..., None, None] * identity
     covariance = 0.5 * (covariance + np.swapaxes(covariance, -1, -2))
 
     # A relative floor preserves physical EEG scale (roughly 1e-10 V^2 here).
@@ -321,6 +353,7 @@ def preprocessing_settings(config: DataConfig) -> dict[str, Any]:
         "artifact_threshold": config.artifact_threshold,
         "artifact_band": list(config.artifact_band),
         "covariance_shrinkage": config.covariance_shrinkage,
+        "covariance_shrinkage_method": config.covariance_shrinkage_method,
         "covariance_demean": config.covariance_demean,
         "dtype": config.dtype,
         "filter_method": config.filter_method,
@@ -527,6 +560,7 @@ def load_fif_session(path: Path, key: SessionKey, config: DataConfig) -> Session
     covariances = make_spd_covariances(
         filter_bank,
         shrinkage=config.covariance_shrinkage,
+        method=config.covariance_shrinkage_method,
         demean=config.covariance_demean,
         dtype=output_dtype,
     )

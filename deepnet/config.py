@@ -100,6 +100,7 @@ class DataConfig:
     artifact_threshold: float | None = 100e-6
     artifact_band: tuple[float, float] = (8.0, 30.0)
     covariance_shrinkage: float = 1e-3
+    covariance_shrinkage_method: str = "fixed"
     covariance_demean: bool = True
     dtype: str = "float32"
     filter_method: str = "fir"
@@ -142,6 +143,8 @@ class DataConfig:
             raise ValueError("artifact_threshold must be positive or None")
         if not 0.0 < self.covariance_shrinkage <= 1.0:
             raise ValueError("covariance_shrinkage must be in (0, 1]")
+        if self.covariance_shrinkage_method not in {"fixed", "oas"}:
+            raise ValueError("covariance_shrinkage_method must be 'fixed' or 'oas'")
         if self.dtype not in {"float32", "float64"}:
             raise ValueError("dtype must be 'float32' or 'float64'")
         if self.filter_method != "fir":

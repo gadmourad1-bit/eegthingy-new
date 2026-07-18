@@ -16,6 +16,8 @@ from sklearn.metrics import balanced_accuracy_score
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset
 
+from .augment import augment_batch, left_right_swap_index
+from .config import CHANNELS
 from .model import GeoAdaptNet
 
 
@@ -33,6 +35,29 @@ class TrainConfig:
     seed: int = 7
     device: str = "auto"
     num_workers: int = 0
+    # Auxiliary loss on the full-strength anchor+residual prediction (gate forced
+    # to 1).  With the default gated combination the residual head only receives
+    # gradient scaled by the near-zero gate, so the branch never learns and the
+    # gate never has a reason to open.  A positive weight here trains the residual
+    # head directly, letting the main-task gradient then open the gate.  Zero
+    # reproduces the original anchor-collapsing behaviour exactly.
+    deep_supervision_weight: float = 0.0
+    # AdamW weight decay pulls the gate logit toward sigmoid(0)=0.5 (or shrinks a
+    # deliberately larger init); excluding it lets the data, not the regularizer,
+    # decide the residual mixing strength.
+    exclude_gate_from_weight_decay: bool = False
+    # Early stopping monitors "loss" by default; "balanced_accuracy" or the
+    # "blend" (loss minus balanced accuracy) can select higher-accuracy epochs.
+    select_metric: str = "loss"
+    # Fit-side covariance augmentation (training loader only).  0 disables.
+    lr_swap_prob: float = 0.0
+    mixup_alpha: float = 0.0
+    augment_eps: float = 1e-5
+    # Determinism is on by default for reproducible research runs.  Disabling it
+    # (the "--fast" profile, paired with a larger batch) lets CUDA use faster
+    # non-deterministic kernels and TF32 matmuls; seeds still fix init/shuffling,
+    # so runs stay close but are no longer bit-exact.
+    deterministic: bool = True
 
 
 @dataclass
@@ -160,15 +185,19 @@ def resolve_device(preference: str = "auto") -> torch.device:
     return device
 
 
-def set_reproducible_seed(seed: int) -> None:
+def set_reproducible_seed(seed: int, *, deterministic: bool = True) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     # Determinism is preferred for this small research model; warn-only avoids
-    # failing on a platform without a deterministic implementation.
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    # failing on a platform without a deterministic implementation.  The fast
+    # profile trades bit-exactness for faster kernels and TF32 matmuls.
+    torch.use_deterministic_algorithms(deterministic, warn_only=True)
+    if not deterministic:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
 
 def _reference_or_none(reference_batch: Tensor) -> Tensor | None:
@@ -184,6 +213,7 @@ def _batch_loss(
     *,
     label_smoothing: float,
     intent_weight: float,
+    deep_supervision_weight: float = 0.0,
 ) -> tuple[Tensor, Tensor]:
     output = model(covariances, log_reference=_reference_or_none(references))
     task_mask = labels >= 0
@@ -191,6 +221,15 @@ def _batch_loss(
         task_loss = nn.functional.cross_entropy(
             output.logits[task_mask], labels[task_mask], label_smoothing=label_smoothing
         )
+        if deep_supervision_weight > 0.0:
+            # Full-strength anchor+residual prediction (as if the gate were open).
+            # This gives the residual head an ungated gradient so it learns real
+            # structure; the gate is still driven only by the main gated loss.
+            full = output.anchor_logits + output.residual_logits
+            deep_loss = nn.functional.cross_entropy(
+                full[task_mask], labels[task_mask], label_smoothing=label_smoothing
+            )
+            task_loss = task_loss + deep_supervision_weight * deep_loss
     else:
         task_loss = output.logits.sum() * 0.0
     if output.intent_logit is not None and intent_weight > 0.0:
@@ -242,6 +281,45 @@ def _evaluate_loss(
     return mean_loss, balanced
 
 
+def _build_optimizer(model: GeoAdaptNet, config: TrainConfig) -> torch.optim.Optimizer:
+    """AdamW, optionally holding the residual gate out of weight decay."""
+
+    if not config.exclude_gate_from_weight_decay:
+        return torch.optim.AdamW(
+            model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
+        )
+    decayed: list[Tensor] = []
+    undecayed: list[Tensor] = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        (undecayed if name.endswith("residual_gate_logit") else decayed).append(param)
+    return torch.optim.AdamW(
+        [
+            {"params": decayed, "weight_decay": config.weight_decay},
+            {"params": undecayed, "weight_decay": 0.0},
+        ],
+        lr=config.learning_rate,
+    )
+
+
+def _augmentation_enabled(config: TrainConfig) -> bool:
+    return config.lr_swap_prob > 0.0 or config.mixup_alpha > 0.0
+
+
+def _selection_score(loss: float, balanced: float, metric: str) -> float:
+    """Return a lower-is-better selection score for the requested metric."""
+
+    if metric == "loss":
+        return loss
+    finite_balanced = balanced if balanced == balanced else 0.0  # NaN -> 0
+    if metric == "balanced_accuracy":
+        return -finite_balanced
+    if metric == "blend":
+        return loss - finite_balanced
+    raise ValueError(f"unknown select_metric: {metric!r}")
+
+
 def train_model(
     model: GeoAdaptNet,
     train_data: CovarianceDataset,
@@ -252,7 +330,7 @@ def train_model(
 
     if len(train_data) == 0 or len(validation_data) == 0:
         raise ValueError("training and validation datasets must be non-empty")
-    set_reproducible_seed(config.seed)
+    set_reproducible_seed(config.seed, deterministic=config.deterministic)
     device = resolve_device(config.device)
     model = model.to(device)
     generator = torch.Generator().manual_seed(config.seed)
@@ -269,12 +347,14 @@ def train_model(
         shuffle=False,
         num_workers=config.num_workers,
     )
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
-    )
+    optimizer = _build_optimizer(model, config)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs)
+    augment = _augmentation_enabled(config)
+    swap_index = torch.as_tensor(left_right_swap_index(CHANNELS), dtype=torch.long, device=device)
+    augment_generator = torch.Generator(device=device).manual_seed(config.seed + 1)
 
     best_state: dict[str, Tensor] | None = None
+    best_score = float("inf")
     best_loss = float("inf")
     best_balanced = float("nan")
     best_epoch = -1
@@ -289,6 +369,20 @@ def train_model(
         for cov, labels, references, intent in train_loader:
             cov, labels = cov.to(device), labels.to(device)
             references, intent = references.to(device), intent.to(device)
+            if augment:
+                with torch.no_grad():
+                    cov, labels, augmented_refs = augment_batch(
+                        cov,
+                        labels,
+                        references,
+                        swap_index=swap_index,
+                        lr_swap_prob=config.lr_swap_prob,
+                        mixup_alpha=config.mixup_alpha,
+                        eps=config.augment_eps,
+                        generator=augment_generator,
+                    )
+                if augmented_refs is not None:
+                    references = augmented_refs
             optimizer.zero_grad(set_to_none=True)
             loss, _ = _batch_loss(
                 model,
@@ -298,6 +392,7 @@ def train_model(
                 intent,
                 label_smoothing=config.label_smoothing,
                 intent_weight=config.intent_loss_weight,
+                deep_supervision_weight=config.deep_supervision_weight,
             )
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
@@ -309,6 +404,7 @@ def train_model(
         validation_loss, validation_balanced = _evaluate_loss(
             model, validation_loader, device, config
         )
+        score = _selection_score(validation_loss, validation_balanced, config.select_metric)
         history.append(
             {
                 "epoch": float(epoch),
@@ -318,7 +414,8 @@ def train_model(
                 "learning_rate": float(optimizer.param_groups[0]["lr"]),
             }
         )
-        if validation_loss < best_loss - config.min_delta:
+        if score < best_score - config.min_delta:
+            best_score = score
             best_loss = validation_loss
             best_balanced = validation_balanced
             best_epoch = epoch
@@ -366,7 +463,7 @@ def train_fixed_epochs(
     if epochs <= 0:
         raise ValueError("epochs must be positive")
 
-    set_reproducible_seed(config.seed)
+    set_reproducible_seed(config.seed, deterministic=config.deterministic)
     device = resolve_device(config.device)
     model = model.to(device)
     generator = torch.Generator().manual_seed(config.seed)
@@ -377,9 +474,7 @@ def train_fixed_epochs(
         generator=generator,
         num_workers=config.num_workers,
     )
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
-    )
+    optimizer = _build_optimizer(model, config)
     # Match the learning-rate trajectory used during epoch selection.  Compressing
     # the cosine horizon into ``epochs`` would refit with a different optimizer
     # schedule from the one whose stopping point was validated.
@@ -405,6 +500,7 @@ def train_fixed_epochs(
                 intent,
                 label_smoothing=config.label_smoothing,
                 intent_weight=config.intent_loss_weight,
+                deep_supervision_weight=config.deep_supervision_weight,
             )
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)

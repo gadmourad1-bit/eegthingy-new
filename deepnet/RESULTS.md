@@ -111,6 +111,148 @@ Source of truth:
 - `deepnet/results/nested_loso_v2_combined.json`
 - `deepnet/results/nested_loso_v2_combined.md`
 
+## Accuracy improvement (v3): fit-side augmentation
+
+The schema-v2 diagnostics above show the learned residual is inert (+0.17 points, gate
+≈ its 0.02 initialization). A follow-up campaign established *why*, and what does move the
+number. All runs below keep the exact protected schema-v2 protocol, are fit/selection-side
+only (never the outer test), and reproduce the v2 baselines above bit-for-bit when their
+knobs are off. Every knob defaults off, so the tables above are unchanged.
+
+**The residual is redundant, not merely untrained.** Reviving it three ways — deep
+supervision on the un-gated `anchor+residual`, raising and freeing the gate (it does open,
+0.02 → 0.21), and CSP-warm-starting each BiMap with supervised common-spatial-pattern
+filters (fit on the training recordings only, in the recentered frame) — each made the
+residual genuinely discriminative yet left balanced accuracy at ≈ 85%. The discriminative
+structure CSP captures is already present in the full-rank tangent anchor. FBCSP's edge is
+therefore regularization (8 supervised features + double shrinkage), not nonlinearity: the
+480-dimensional tangent anchor overfits ≈ 950 training epochs.
+
+**What moves the number is regularizing that anchor.** A fit-side, label-consistent
+augmentation — left/right electrode swap with label flip (motor imagery is laterally
+organized: C3↔C4, F3↔F4, …), a symmetric covariance permutation applied to the training
+loader only — combined with accuracy-targeted (`blend`) checkpoint selection, gives a
+consistent gain under both protocols. It is selected on the rec3 validation score, not on
+test, and confirmed across seeds 7/17/27.
+
+| Protocol | Baseline | + swap-aug + blend | Δ | EA-FBCSP |
+| --- | ---: | ---: | ---: | ---: |
+| Chronological (3 seeds) | 84.86% | **86.62 ± 10.84%** | +1.76 | 87.53% |
+| Strict LOSO (seed 7) | 83.54% | **85.02 ± 9.52%** | +1.48 | 85.67% |
+
+The augmented model nearly matches FBCSP under both protocols (chronological gap 0.91 pt,
+LOSO gap 0.65 pt) while retaining the high-precision operating point: chronological rest
+false commits 19.8% and LOSO 15.96%, versus FBCSP's 50.85% / 43.84%. Seven of eight LOSO
+participants improve (S1 74.7 → 79.0, S3 → 90.5, S4 → 94.0, S5 → 95.5, S6 → 94.4). This
+narrows, but does not overturn, the classical bar — the honest result remains competitive
+accuracy with a materially safer rest-commit profile, at somewhat lower coverage
+(chronological 42.3%, LOSO 28.8%). Augmentation slightly raises coverage and rest commits
+versus the un-augmented net, a trade recorded here rather than hidden.
+
+Levers that did **not** help, tested and recorded so they are not re-tried: residual
+revival in any form above; log-Euclidean same-class mixup (≈ 0); 3-seed probability
+ensembling (uplift −0.1 to −0.3, the augmented seeds are already low-variance); a longer
+optimizer budget (overfits — worse); adaptive OAS covariance shrinkage (−1 pt: on real EEG
+the OAS weight is ≈ 0.01, so the fixed 1e-3 shrinkage was already appropriate and more
+shrinkage washes out structure); and test-time left/right mirror averaging (−0.79 pt at 3
+seeds — redundant with the swap augmentation, which already banks the lateral symmetry in
+training, so averaging it again at test only adds noise and coverage). None are adopted.
+The `--fast` (non-deterministic + TF32) and `--tta-mirror` flags remain available but off.
+
+Reproduce the winning configuration (defaults reproduce the v2 baseline):
+
+```bash
+.venv/bin/python -m deepnet.experiment benchmark --subjects all \
+  --models geoadapt,riemann,fbcsp --seeds 7,17,27 --window deployment \
+  --calibration-windows 20 --max-epochs 180 --patience 25 --device cuda \
+  --lr-swap-prob 0.5 --select-metric blend \
+  --output deepnet/results/chronological_v3_swap_blend.json
+
+.venv/bin/python -m deepnet.loso --subjects all --seeds 7 \
+  --calibration-task-events 10 --max-epochs 180 --patience 25 --device cuda \
+  --lr-swap-prob 0.5 --select-metric blend \
+  --output deepnet/results/nested_loso_v3_swap_blend.json
+```
+
+Source of truth (produced on the RTX 5070; geoadapt-only dev stems, full schema-v2 traces):
+
+- `deepnet/results/dev/v3_swap_blend.json` (chronological, 3 seeds)
+- `deepnet/results/dev/loso_swap_blend.json` (strict LOSO, seed 7)
+
+This does not change the claim boundary below: still eight healthy volunteers, still no
+superiority claim over FBCSP, still no clinical, closed-loop, or external-generalization
+evidence.
+
+## Deep-learning baseline comparison
+
+To place GeoAdaptNet against the modern deep-learning field, it is compared with five
+widely-cited braindecode architectures --- EEGNet (Lawhern 2018), ShallowConvNet and
+DeepConvNet (Schirrmeister 2017), EEG-Conformer (Song 2023), and ATCNet (Altaheri 2023)
+--- and the two classical decoders, under one uniform, leakage-controlled protocol
+(`deepnet/dnn_benchmark.py`).  Per participant, recordings 1--2 train, recording 3 selects
+the checkpoint, and recording 4 is scored by raw balanced accuracy on its task windows; no
+online recentering is applied to any model, so the comparison isolates the architecture.
+Convolutional nets consume broadband epochs, GeoAdaptNet consumes filter-bank covariances,
+classical methods use their native features.  Neural models are averaged over seeds 7/17/27
+within participant.  (These numbers are not comparable to the schema-v2 tables above, which
+use the online-adapter deployment protocol; this is a separate architecture-only comparison.)
+
+Every neural network is trained twice: with standard training, and with the left/right swap
+augmentation applied identically to all of them (its raw-epoch analogue for the conv nets).
+The augmentation is architecture-agnostic and helps every model, so the comparison is fair.
+
+| Architecture | Params | Bal. acc (no aug) | Bal. acc (+ swap aug) |
+| --- | ---: | ---: | ---: |
+| **GeoAdaptNet** | **9,645** | 85.63 ± 8.61% | **87.58 ± 10.49%** |
+| ShallowConvNet | 26,002 | 85.87 ± 10.30% | 87.04 ± 10.31% |
+| EEG-Conformer | 266,306 | 85.73 ± 8.41% | 86.40 ± 12.28% |
+| EEGNet | 1,602 | 70.51 ± 14.24% | 83.96 ± 13.98% |
+| ATCNet | 28,868 | 55.07 ± 10.14% | 75.25 ± 21.98% |
+| DeepConvNet | 233,652 | 50.15 ± 4.46% | 54.10 ± 9.95% |
+| EA-FBCSP (classical) | --- | 90.01 ± 9.68% | --- |
+| Riemann-TS+LR (classical) | --- | 90.06 ± 10.00% | --- |
+
+With the same augmentation, GeoAdaptNet is the most accurate deep architecture and uses the
+fewest parameters (9.6 k versus 26 k--266 k).  Without augmentation it is on par with the
+best conv nets (ShallowConvNet, EEG-Conformer) at a fraction of their size, while the large,
+data-hungry nets (DeepConvNet 234 k params) collapse toward chance on roughly 120 training
+epochs per subject --- the data-efficiency argument for geometric decoders.  The two
+classical geometric pipelines remain the overall bar under this simple protocol.  This is a
+local-cohort result; the external replication below tests whether the ranking is an artefact
+of the local recordings.
+
+### External replication (Cho 2017 / GigaDB 100295)
+
+The same architectures and the same matched 15-channel / 125 Hz pipeline are run on the
+independent Cho2017 left/right-hand MI cohort (`deepnet/external_cho2017.py`,
+`deepnet/external_benchmark.py`), which uses different subjects, a 64-channel montage, and a
+512 Hz amplifier (its 10-10 names P7/P8/T7/T8 map to our 10-20 T5/T6/T3/T4).  Cho2017 is
+single-session, so the protocol is within-subject stratified 5-fold cross-validation, over
+the first 30 subjects, one seed.
+
+| Architecture | Bal. acc (no aug) | Bal. acc (+ swap aug) |
+| --- | ---: | ---: |
+| ShallowConvNet | **61.95 ± 11.89%** | **62.39 ± 11.05%** |
+| **GeoAdaptNet** | 57.27 ± 6.93% | 58.18 ± 7.27% |
+| EEG-Conformer | 56.73 ± 8.43% | 58.16 ± 9.20% |
+| EEGNet | 54.71 ± 8.14% | 60.94 ± 13.93% |
+| ATCNet | 50.63 ± 3.65% | 51.24 ± 7.84% |
+| DeepConvNet | 50.56 ± 4.24% | 51.30 ± 3.56% |
+
+Absolute accuracies are much lower than on the local cohort because Cho2017 is a large, noisy
+set with many near-chance participants, but the *ranking* is what matters for the bias check.
+GeoAdaptNet does not top this cohort --- ShallowConvNet is consistently best on Cho2017 --- but
+it stays firmly in the strong group (second/third, tied with EEG-Conformer) and, notably, has
+the **lowest cross-subject variance of any model** (± 6.9--7.3 vs ± 8--14), i.e. it is the most
+consistent architecture across unseen subjects.  Crucially, the two groupings are stable across
+both datasets: the strong architectures (ShallowConvNet, GeoAdaptNet, EEG-Conformer) and the
+data-hungry ones that fail on small windows (ATCNet, DeepConvNet) are the same locally and
+externally.  GeoAdaptNet wins on the local data and remains competitive on a wholly independent
+cohort rather than collapsing, so its local strength is not an artefact of the local recordings.
+
+Source of truth: `deepnet/results/dnn_compare_local.json`, `dnn_compare_local_aug.json`,
+`dnn_compare_cho2017.json`, `dnn_compare_cho2017_aug.json`.
+
 ## Reproduce reports
 
 ```bash

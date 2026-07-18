@@ -210,6 +210,40 @@ class GeoAdaptNet(nn.Module):
             layer.retract_()
         return self
 
+    @torch.no_grad()
+    def init_bimaps_from_csp(
+        self,
+        covariances: Any,
+        labels: Any,
+        *,
+        recenter: bool = True,
+    ) -> "GeoAdaptNet":
+        """Seed each band's BiMap from supervised CSP filters (fit data only).
+
+        A random BiMap projects the covariance onto a subspace that carries no
+        class information the full-rank tangent anchor does not already see, so
+        the residual stays inert.  Seeding it with the per-band common-spatial-
+        pattern subspace makes ``LogEig(BiMap C BiMap^T)`` approximate the
+        supervised log-variance features classical FB-CSP exploits.  The caller
+        must pass covariances/labels from the training recordings only; this
+        method never inspects the selection or outer-test recordings.
+        """
+
+        from .csp_init import bandwise_csp_bases
+
+        bases = bandwise_csp_bases(covariances, labels, self.reduced_dim, recenter=recenter)
+        if len(bases) != self.bands:
+            raise ValueError(f"expected {self.bands} CSP bases, got {len(bases)}")
+        for band, basis in enumerate(bases):
+            weight = torch.as_tensor(basis, dtype=self.bimaps[band].raw_weight.dtype)
+            if weight.shape != self.bimaps[band].raw_weight.shape:
+                raise ValueError(
+                    f"CSP basis for band {band} has shape {tuple(weight.shape)}, "
+                    f"expected {tuple(self.bimaps[band].raw_weight.shape)}"
+                )
+            self.bimaps[band].raw_weight.copy_(weight)
+        return self
+
     def reset_running_stats(self) -> None:
         self.reference.reset_running_stats()
 

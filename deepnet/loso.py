@@ -103,12 +103,21 @@ class LOSOConfig:
     commit_confidence: float = 0.85
     temperature_grid: tuple[float, ...] = (0.5, 0.75, 1.0, 1.5, 2.0)
     target_median_blends: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
+    # Accuracy knobs (defaults reproduce the locked LOSO baseline); fit-side only.
+    lr_swap_prob: float = 0.0
+    select_metric: str = "loss"
+    covariance_shrinkage_method: str = "fixed"
+    deterministic: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "temperature_grid", tuple(self.temperature_grid))
         object.__setattr__(self, "target_median_blends", tuple(self.target_median_blends))
         if self.window not in EPOCH_WINDOWS:
             raise ValueError(f"unknown window {self.window!r}")
+        if self.select_metric not in {"loss", "balanced_accuracy", "blend"}:
+            raise ValueError("select_metric must be loss, balanced_accuracy, or blend")
+        if self.covariance_shrinkage_method not in {"fixed", "oas"}:
+            raise ValueError("covariance_shrinkage_method must be 'fixed' or 'oas'")
         if self.calibration_task_events < 2:
             raise ValueError("calibration_task_events must be at least 2")
         if self.max_epochs <= 0 or self.patience <= 0 or self.batch_size <= 0:
@@ -343,6 +352,9 @@ def _training_config(config: LOSOConfig, seed: int) -> TrainConfig:
         patience=config.patience,
         seed=int(seed),
         device=config.device,
+        lr_swap_prob=config.lr_swap_prob,
+        select_metric=config.select_metric,
+        deterministic=config.deterministic,
     )
 
 
@@ -730,7 +742,7 @@ def _run_fold(
         data.session_ids[fold.selection_indices],
     )
     train_config = _training_config(config, seed)
-    set_reproducible_seed(seed)
+    set_reproducible_seed(seed, deterministic=config.deterministic)
     selection_model = GeoAdaptNet(auxiliary_intent=config.include_rest)
     selected = train_model(
         selection_model,
@@ -854,6 +866,7 @@ def run_nested_loso(
         DEFAULT_DATA_CONFIG,
         window_name=config.window,
         include_rest=config.include_rest,
+        covariance_shrinkage_method=config.covariance_shrinkage_method,
     )
     data = load_sessions(keys, data_config)
     input_contract = dataset_contract(data, data_config)
@@ -998,6 +1011,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=_csv_floats,
         default=LOSOConfig.target_median_blends,
     )
+    parser.add_argument("--lr-swap-prob", type=float, default=0.0)
+    parser.add_argument(
+        "--select-metric", choices=("loss", "balanced_accuracy", "blend"), default="loss"
+    )
+    parser.add_argument(
+        "--covariance-shrinkage-method", choices=("fixed", "oas"), default="fixed"
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="faster iteration: non-deterministic kernels + TF32 matmul (accuracy ~unchanged)",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -1024,6 +1049,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         commit_confidence=args.commit_confidence,
         temperature_grid=args.temperature_grid,
         target_median_blends=args.target_median_blends,
+        lr_swap_prob=args.lr_swap_prob,
+        select_metric=args.select_metric,
+        covariance_shrinkage_method=args.covariance_shrinkage_method,
+        deterministic=not args.fast,
     )
     payload = run_nested_loso(
         subjects=subjects,
