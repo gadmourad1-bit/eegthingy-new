@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+braindecode==1.6.1
+mne==1.12.1
+numpy==2.5.1
+scipy==1.18.0
+scikit-learn==1.9.0
+pyriemann==0.12
+pandas==3.0.3
+matplotlib==3.11.0
+pytest==9.0.2
