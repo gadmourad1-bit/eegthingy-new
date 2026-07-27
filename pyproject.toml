@@ -1,0 +1,20 @@
+[project]
+name = "eegthingy"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "brainflow==5.21.0",
+    "matplotlib==3.10.9",
+    "mne==1.12.1",
+    "numpy==2.4.4",
+    "panda3d==1.10.16",
+    "pyglet==2.1.14",
+    "pyriemann==0.11",
+    "pyserial==3.5",
+    "requests==2.33.1",
+    "scikit-learn==1.8.0",
+    "trimesh==4.12.2",
+    "websockets==16.0",
+]
