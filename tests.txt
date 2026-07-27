@@ -1,0 +1,6 @@
+3 - 2,3,4,1 EA + P, RR + P, EA + G, RR + G
+5 - 1,2,3,4 EA + P, RR + P, EA + G, RR + G
+6 - 3,4,1,2 EA + P, RR + P, EA + G, RR + G
+7 - 1,4,3,2 EA + P, RR + P, EA + G, RR + G
+10 - 4,1,2,3 EA + P, RR + P, EA + G, RR + G
+11 - 3,1,2,4 EA + P, RR + P, EA + G, RR + G
