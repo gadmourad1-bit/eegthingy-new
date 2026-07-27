@@ -28,22 +28,44 @@ from .data import make_spd_covariances
 _NAME_MAP = {"T5": "P7", "T6": "P8", "T3": "T7", "T4": "T8"}
 CHO_PICKS = [_NAME_MAP.get(name, name) for name in CHANNELS]
 
+# Named filter-bank presets for the close-the-gap experiments.  "default" is the
+# locked 4-band set; "rich9" gives finer subject-agnostic spectral resolution.
+BAND_PRESETS: dict[str, tuple[tuple[float, float], ...]] = {
+    "default": BANDS,
+    "rich9": tuple((lo, lo + 4.0) for lo in range(4, 40, 4)),
+    "rich7": ((4, 8), (8, 12), (12, 16), (16, 20), (20, 26), (26, 32), (32, 40)),
+}
+
 _CACHE = Path(__file__).resolve().parent / "cache" / "cho2017"
 _LABELS = {"left_hand": 0, "right_hand": 1}
 
 
-def _cache_path(subject: int, tmin: float, tmax: float) -> Path:
-    key = f"cho_s{subject}_{tmin}_{tmax}_{'-'.join(CHO_PICKS)}_{SFREQ}_{BANDS}"
+def resolve_bands(bands: str | tuple | None) -> tuple[tuple[float, float], ...]:
+    if bands is None:
+        return BANDS
+    if isinstance(bands, str):
+        return BAND_PRESETS[bands]
+    return tuple((float(lo), float(hi)) for lo, hi in bands)
+
+
+def _cache_path(subject: int, tmin: float, tmax: float, bands: tuple) -> Path:
+    key = f"cho_s{subject}_{tmin}_{tmax}_{'-'.join(CHO_PICKS)}_{SFREQ}_{bands}"
     digest = hashlib.sha256(key.encode()).hexdigest()[:16]
     return _CACHE / f"cho_s{subject:02d}_{digest}.npz"
 
 
 def load_cho_subject(
-    subject: int, *, tmin: float = 0.0, tmax: float = 2.0, use_cache: bool = True
+    subject: int,
+    *,
+    tmin: float = 0.0,
+    tmax: float = 2.0,
+    bands: str | tuple | None = None,
+    use_cache: bool = True,
 ) -> dict[str, np.ndarray]:
     """Return matched covariances, broadband epochs, and labels for one subject."""
 
-    target = _cache_path(subject, tmin, tmax)
+    band_set = resolve_bands(bands)
+    target = _cache_path(subject, tmin, tmax, band_set)
     if use_cache and target.is_file():
         with np.load(target) as cached:
             return {k: cached[k] for k in ("covariances", "broadband", "labels")}
@@ -76,8 +98,8 @@ def load_cho_subject(
         return ep.get_data(copy=True).astype(np.float32), labels
 
     broadband, labels = epoch(8.0, 30.0)
-    bands = [epoch(low, high)[0] for low, high in BANDS]
-    filter_bank = np.stack(bands, axis=1)  # (N, 4, 15, T)
+    band_signals = [epoch(low, high)[0] for low, high in band_set]
+    filter_bank = np.stack(band_signals, axis=1)  # (N, n_bands, 15, T)
     covariances = make_spd_covariances(filter_bank, dtype="float32")
 
     result = {"covariances": covariances, "broadband": broadband, "labels": labels}

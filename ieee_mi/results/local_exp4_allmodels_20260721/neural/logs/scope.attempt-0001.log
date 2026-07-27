@@ -1,0 +1,81 @@
+[2026-07-21T04:22:32.827220+00:00] local_exp4 S1 fold=0 model=scope seed=7
+  BA=0.5333 best_epoch=2 seconds=0.9
+[2026-07-21T04:22:34.357196+00:00] local_exp4 S1 fold=0 model=scope seed=17
+  BA=0.4500 best_epoch=7 seconds=0.7
+[2026-07-21T04:22:35.102011+00:00] local_exp4 S1 fold=0 model=scope seed=27
+  BA=0.4833 best_epoch=3 seconds=0.6
+[2026-07-21T04:22:35.726094+00:00] local_exp4 S1 fold=0 model=scope seed=37
+  BA=0.6167 best_epoch=3 seconds=0.6
+[2026-07-21T04:22:36.349596+00:00] local_exp4 S1 fold=0 model=scope seed=47
+  BA=0.4667 best_epoch=2 seconds=0.6
+[2026-07-21T04:22:36.945804+00:00] local_exp4 S3 fold=0 model=scope seed=7
+  BA=0.9000 best_epoch=31 seconds=1.5
+[2026-07-21T04:22:38.490422+00:00] local_exp4 S3 fold=0 model=scope seed=17
+  BA=0.8167 best_epoch=32 seconds=1.5
+[2026-07-21T04:22:40.065746+00:00] local_exp4 S3 fold=0 model=scope seed=27
+  BA=0.8333 best_epoch=61 seconds=2.4
+[2026-07-21T04:22:42.517745+00:00] local_exp4 S3 fold=0 model=scope seed=37
+  BA=0.8500 best_epoch=53 seconds=2.2
+[2026-07-21T04:22:44.703461+00:00] local_exp4 S3 fold=0 model=scope seed=47
+  BA=0.7500 best_epoch=4 seconds=0.6
+[2026-07-21T04:22:45.364850+00:00] local_exp4 S4 fold=0 model=scope seed=7
+  BA=0.6000 best_epoch=5 seconds=0.7
+[2026-07-21T04:22:46.053939+00:00] local_exp4 S4 fold=0 model=scope seed=17
+  BA=0.6000 best_epoch=9 seconds=0.8
+[2026-07-21T04:22:46.872423+00:00] local_exp4 S4 fold=0 model=scope seed=27
+  BA=0.8167 best_epoch=61 seconds=2.4
+[2026-07-21T04:22:49.322612+00:00] local_exp4 S4 fold=0 model=scope seed=37
+  BA=0.5333 best_epoch=2 seconds=0.6
+[2026-07-21T04:22:49.934672+00:00] local_exp4 S4 fold=0 model=scope seed=47
+  BA=0.5500 best_epoch=3 seconds=0.6
+[2026-07-21T04:22:50.581867+00:00] local_exp4 S5 fold=0 model=scope seed=7
+  BA=0.8833 best_epoch=42 seconds=1.8
+[2026-07-21T04:22:52.456044+00:00] local_exp4 S5 fold=0 model=scope seed=17
+  BA=0.9500 best_epoch=65 seconds=2.6
+[2026-07-21T04:22:55.048483+00:00] local_exp4 S5 fold=0 model=scope seed=27
+  BA=0.9333 best_epoch=76 seconds=2.9
+[2026-07-21T04:22:58.075166+00:00] local_exp4 S5 fold=0 model=scope seed=37
+  BA=0.9500 best_epoch=80 seconds=3.0
+[2026-07-21T04:23:01.116620+00:00] local_exp4 S5 fold=0 model=scope seed=47
+  BA=0.9000 best_epoch=40 seconds=1.8
+[2026-07-21T04:23:02.935612+00:00] local_exp4 S6 fold=0 model=scope seed=7
+  BA=0.5167 best_epoch=3 seconds=0.6
+[2026-07-21T04:23:03.571756+00:00] local_exp4 S6 fold=0 model=scope seed=17
+  BA=0.9500 best_epoch=125 seconds=4.5
+[2026-07-21T04:23:08.072466+00:00] local_exp4 S6 fold=0 model=scope seed=27
+  BA=0.9500 best_epoch=92 seconds=3.4
+[2026-07-21T04:23:11.505015+00:00] local_exp4 S6 fold=0 model=scope seed=37
+  BA=0.4833 best_epoch=3 seconds=0.6
+[2026-07-21T04:23:12.128079+00:00] local_exp4 S6 fold=0 model=scope seed=47
+  BA=0.8833 best_epoch=36 seconds=1.7
+[2026-07-21T04:23:13.807330+00:00] local_exp4 S7 fold=0 model=scope seed=7
+  BA=0.4500 best_epoch=3 seconds=0.6
+[2026-07-21T04:23:14.466467+00:00] local_exp4 S7 fold=0 model=scope seed=17
+  BA=0.4833 best_epoch=5 seconds=0.7
+[2026-07-21T04:23:15.164598+00:00] local_exp4 S7 fold=0 model=scope seed=27
+  BA=0.5500 best_epoch=5 seconds=0.7
+[2026-07-21T04:23:15.856861+00:00] local_exp4 S7 fold=0 model=scope seed=37
+  BA=0.6167 best_epoch=5 seconds=0.7
+[2026-07-21T04:23:16.544412+00:00] local_exp4 S7 fold=0 model=scope seed=47
+  BA=0.5833 best_epoch=5 seconds=0.7
+[2026-07-21T04:23:17.260754+00:00] local_exp4 S8 fold=0 model=scope seed=7
+  BA=0.5167 best_epoch=2 seconds=0.6
+[2026-07-21T04:23:17.865893+00:00] local_exp4 S8 fold=0 model=scope seed=17
+  BA=0.5667 best_epoch=3 seconds=0.6
+[2026-07-21T04:23:18.502161+00:00] local_exp4 S8 fold=0 model=scope seed=27
+  BA=0.4833 best_epoch=5 seconds=0.7
+[2026-07-21T04:23:19.207369+00:00] local_exp4 S8 fold=0 model=scope seed=37
+  BA=0.5167 best_epoch=3 seconds=0.6
+[2026-07-21T04:23:19.881877+00:00] local_exp4 S8 fold=0 model=scope seed=47
+  BA=0.5500 best_epoch=3 seconds=0.6
+[2026-07-21T04:23:20.531968+00:00] local_exp4 S10 fold=0 model=scope seed=7
+  BA=0.7833 best_epoch=70 seconds=2.8
+[2026-07-21T04:23:23.346837+00:00] local_exp4 S10 fold=0 model=scope seed=17
+  BA=0.6167 best_epoch=15 seconds=1.0
+[2026-07-21T04:23:24.388625+00:00] local_exp4 S10 fold=0 model=scope seed=27
+  BA=0.8500 best_epoch=87 seconds=3.0
+[2026-07-21T04:23:27.457444+00:00] local_exp4 S10 fold=0 model=scope seed=37
+  BA=0.6667 best_epoch=6 seconds=0.6
+[2026-07-21T04:23:28.130664+00:00] local_exp4 S10 fold=0 model=scope seed=47
+  BA=0.6833 best_epoch=10 seconds=0.8
+wrote /home/user/Desktop/eegthingy_local_allmodels_20260721/results/local_all_43_formal_v1/artifacts/scope.json

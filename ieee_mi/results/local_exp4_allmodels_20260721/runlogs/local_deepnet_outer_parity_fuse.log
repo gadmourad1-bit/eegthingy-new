@@ -1,0 +1,57 @@
+parity_fuse local_exp4 S1 seed=7: bacc=81.67%
+parity_fuse local_exp4 S1 seed=17: bacc=81.67%
+parity_fuse local_exp4 S1 seed=27: bacc=81.67%
+parity_fuse local_exp4 S1 seed=37: bacc=81.67%
+parity_fuse local_exp4 S1 seed=47: bacc=83.33%
+parity_fuse local_exp4 S3 seed=7: bacc=93.33%
+parity_fuse local_exp4 S3 seed=17: bacc=95.00%
+parity_fuse local_exp4 S3 seed=27: bacc=95.00%
+parity_fuse local_exp4 S3 seed=37: bacc=93.33%
+parity_fuse local_exp4 S3 seed=47: bacc=91.67%
+parity_fuse local_exp4 S4 seed=7: bacc=95.00%
+parity_fuse local_exp4 S4 seed=17: bacc=93.33%
+parity_fuse local_exp4 S4 seed=27: bacc=95.00%
+parity_fuse local_exp4 S4 seed=37: bacc=95.00%
+parity_fuse local_exp4 S4 seed=47: bacc=93.33%
+parity_fuse local_exp4 S5 seed=7: bacc=100.00%
+parity_fuse local_exp4 S5 seed=17: bacc=100.00%
+parity_fuse local_exp4 S5 seed=27: bacc=100.00%
+parity_fuse local_exp4 S5 seed=37: bacc=100.00%
+parity_fuse local_exp4 S5 seed=47: bacc=100.00%
+parity_fuse local_exp4 S6 seed=7: bacc=96.67%
+parity_fuse local_exp4 S6 seed=17: bacc=96.67%
+parity_fuse local_exp4 S6 seed=27: bacc=96.67%
+parity_fuse local_exp4 S6 seed=37: bacc=96.67%
+parity_fuse local_exp4 S6 seed=47: bacc=96.67%
+parity_fuse local_exp4 S7 seed=7: bacc=75.00%
+parity_fuse local_exp4 S7 seed=17: bacc=75.00%
+parity_fuse local_exp4 S7 seed=27: bacc=75.00%
+parity_fuse local_exp4 S7 seed=37: bacc=75.00%
+parity_fuse local_exp4 S7 seed=47: bacc=75.00%
+parity_fuse local_exp4 S8 seed=7: bacc=88.33%
+parity_fuse local_exp4 S8 seed=17: bacc=88.33%
+parity_fuse local_exp4 S8 seed=27: bacc=88.33%
+parity_fuse local_exp4 S8 seed=37: bacc=88.33%
+parity_fuse local_exp4 S8 seed=47: bacc=88.33%
+parity_fuse local_exp4 S10 seed=7: bacc=86.67%
+parity_fuse local_exp4 S10 seed=17: bacc=86.67%
+parity_fuse local_exp4 S10 seed=27: bacc=86.67%
+parity_fuse local_exp4 S10 seed=37: bacc=86.67%
+parity_fuse local_exp4 S10 seed=47: bacc=86.67%
+{
+  "aggregation": "mean seeds within participant, then equal-weight participant mean",
+  "balanced_accuracy_mean": 0.8958333333333334,
+  "balanced_accuracy_std": 0.08264957580624585,
+  "n_participants": 8,
+  "n_records": 40,
+  "subject_balanced_accuracy": {
+    "1": 0.82,
+    "10": 0.8666666666666668,
+    "3": 0.9366666666666668,
+    "4": 0.9433333333333334,
+    "5": 1.0,
+    "6": 0.9666666666666666,
+    "7": 0.75,
+    "8": 0.8833333333333332
+  }
+}

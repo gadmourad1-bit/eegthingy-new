@@ -1,0 +1,81 @@
+[2026-07-21T04:31:54.116983+00:00] local_exp4 S1 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.6833 best_epoch=105 seconds=2.7
+[2026-07-21T04:31:57.451360+00:00] local_exp4 S1 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.7167 best_epoch=80 seconds=1.9
+[2026-07-21T04:31:59.376201+00:00] local_exp4 S1 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.7167 best_epoch=146 seconds=3.3
+[2026-07-21T04:32:02.706831+00:00] local_exp4 S1 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.7333 best_epoch=90 seconds=2.2
+[2026-07-21T04:32:04.956960+00:00] local_exp4 S1 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.7167 best_epoch=81 seconds=2.1
+[2026-07-21T04:32:07.045250+00:00] local_exp4 S3 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.9000 best_epoch=38 seconds=1.2
+[2026-07-21T04:32:08.218247+00:00] local_exp4 S3 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.9333 best_epoch=76 seconds=1.9
+[2026-07-21T04:32:10.185139+00:00] local_exp4 S3 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.9167 best_epoch=48 seconds=1.3
+[2026-07-21T04:32:11.552588+00:00] local_exp4 S3 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.9667 best_epoch=57 seconds=1.5
+[2026-07-21T04:32:13.100733+00:00] local_exp4 S3 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.9667 best_epoch=105 seconds=2.6
+[2026-07-21T04:32:15.698484+00:00] local_exp4 S4 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.8833 best_epoch=78 seconds=2.0
+[2026-07-21T04:32:17.700374+00:00] local_exp4 S4 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.8833 best_epoch=103 seconds=2.5
+[2026-07-21T04:32:20.227146+00:00] local_exp4 S4 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.8667 best_epoch=90 seconds=2.2
+[2026-07-21T04:32:22.476360+00:00] local_exp4 S4 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.9000 best_epoch=117 seconds=2.8
+[2026-07-21T04:32:25.279823+00:00] local_exp4 S4 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.8833 best_epoch=62 seconds=1.7
+[2026-07-21T04:32:26.964035+00:00] local_exp4 S5 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=1.0000 best_epoch=83 seconds=2.1
+[2026-07-21T04:32:29.069044+00:00] local_exp4 S5 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.9500 best_epoch=70 seconds=1.8
+[2026-07-21T04:32:30.900417+00:00] local_exp4 S5 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=1.0000 best_epoch=86 seconds=2.2
+[2026-07-21T04:32:33.077666+00:00] local_exp4 S5 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=1.0000 best_epoch=86 seconds=2.1
+[2026-07-21T04:32:35.245394+00:00] local_exp4 S5 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=1.0000 best_epoch=154 seconds=3.6
+[2026-07-21T04:32:38.875340+00:00] local_exp4 S6 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.9833 best_epoch=131 seconds=3.1
+[2026-07-21T04:32:41.989491+00:00] local_exp4 S6 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.9667 best_epoch=141 seconds=3.3
+[2026-07-21T04:32:45.323986+00:00] local_exp4 S6 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.9667 best_epoch=156 seconds=3.6
+[2026-07-21T04:32:48.977776+00:00] local_exp4 S6 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.9833 best_epoch=199 seconds=4.2
+[2026-07-21T04:32:53.195546+00:00] local_exp4 S6 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.9833 best_epoch=159 seconds=3.7
+[2026-07-21T04:32:56.925506+00:00] local_exp4 S7 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.7333 best_epoch=48 seconds=1.4
+[2026-07-21T04:32:58.299301+00:00] local_exp4 S7 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.7167 best_epoch=147 seconds=3.4
+[2026-07-21T04:33:01.759756+00:00] local_exp4 S7 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.7500 best_epoch=191 seconds=4.1
+[2026-07-21T04:33:05.916843+00:00] local_exp4 S7 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.7167 best_epoch=144 seconds=3.4
+[2026-07-21T04:33:09.290214+00:00] local_exp4 S7 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.7500 best_epoch=94 seconds=2.3
+[2026-07-21T04:33:11.656235+00:00] local_exp4 S8 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.8667 best_epoch=181 seconds=4.0
+[2026-07-21T04:33:15.680294+00:00] local_exp4 S8 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.5500 best_epoch=0 seconds=0.3
+[2026-07-21T04:33:16.033803+00:00] local_exp4 S8 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.9000 best_epoch=92 seconds=2.4
+[2026-07-21T04:33:18.427304+00:00] local_exp4 S8 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.9000 best_epoch=124 seconds=2.9
+[2026-07-21T04:33:21.378605+00:00] local_exp4 S8 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.8667 best_epoch=121 seconds=2.9
+[2026-07-21T04:33:24.320774+00:00] local_exp4 S10 fold=0 model=cardinal_dynamics_sinc seed=7
+  BA=0.9500 best_epoch=176 seconds=3.9
+[2026-07-21T04:33:28.252305+00:00] local_exp4 S10 fold=0 model=cardinal_dynamics_sinc seed=17
+  BA=0.9667 best_epoch=155 seconds=3.6
+[2026-07-21T04:33:31.903562+00:00] local_exp4 S10 fold=0 model=cardinal_dynamics_sinc seed=27
+  BA=0.9167 best_epoch=127 seconds=2.9
+[2026-07-21T04:33:34.856879+00:00] local_exp4 S10 fold=0 model=cardinal_dynamics_sinc seed=37
+  BA=0.9667 best_epoch=125 seconds=2.8
+[2026-07-21T04:33:37.642139+00:00] local_exp4 S10 fold=0 model=cardinal_dynamics_sinc seed=47
+  BA=0.8833 best_epoch=136 seconds=3.1
+wrote /home/user/Desktop/eegthingy_local_allmodels_20260721/results/local_all_43_formal_v1/artifacts/cardinal_dynamics_sinc.json

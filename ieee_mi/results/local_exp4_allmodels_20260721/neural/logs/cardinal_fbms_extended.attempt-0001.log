@@ -1,0 +1,161 @@
+[2026-07-21T05:38:11.133913+00:00] local_exp4 S1 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.8333 best_epoch=85 seconds=3.7
+[2026-07-21T05:38:15.948139+00:00] local_exp4 S1 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.7667 best_epoch=125 seconds=4.6
+[2026-07-21T05:38:20.620646+00:00] local_exp4 S1 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.8500 best_epoch=139 seconds=5.1
+[2026-07-21T05:38:25.737181+00:00] local_exp4 S1 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.7833 best_epoch=107 seconds=4.0
+[2026-07-21T05:38:29.779209+00:00] local_exp4 S1 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.8500 best_epoch=122 seconds=4.6
+[2026-07-21T05:38:34.365482+00:00] local_exp4 S3 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9667 best_epoch=49 seconds=2.1
+[2026-07-21T05:38:36.537095+00:00] local_exp4 S3 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9333 best_epoch=42 seconds=1.9
+[2026-07-21T05:38:38.491003+00:00] local_exp4 S3 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9667 best_epoch=69 seconds=2.8
+[2026-07-21T05:38:41.318173+00:00] local_exp4 S3 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9667 best_epoch=39 seconds=1.8
+[2026-07-21T05:38:43.155986+00:00] local_exp4 S3 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9500 best_epoch=80 seconds=3.2
+[2026-07-21T05:38:46.354244+00:00] local_exp4 S4 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9167 best_epoch=24 seconds=1.3
+[2026-07-21T05:38:47.715005+00:00] local_exp4 S4 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9167 best_epoch=45 seconds=2.0
+[2026-07-21T05:38:49.754417+00:00] local_exp4 S4 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9500 best_epoch=30 seconds=1.5
+[2026-07-21T05:38:51.296136+00:00] local_exp4 S4 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9667 best_epoch=36 seconds=1.7
+[2026-07-21T05:38:53.032868+00:00] local_exp4 S4 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9167 best_epoch=65 seconds=2.7
+[2026-07-21T05:38:55.734107+00:00] local_exp4 S5 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=1.0000 best_epoch=26 seconds=1.4
+[2026-07-21T05:38:57.152633+00:00] local_exp4 S5 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=32 seconds=1.6
+[2026-07-21T05:38:58.774417+00:00] local_exp4 S5 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=1.0000 best_epoch=87 seconds=3.4
+[2026-07-21T05:39:02.180482+00:00] local_exp4 S5 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=1.0000 best_epoch=23 seconds=1.3
+[2026-07-21T05:39:03.483756+00:00] local_exp4 S5 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9500 best_epoch=21 seconds=1.2
+[2026-07-21T05:39:04.743176+00:00] local_exp4 S6 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=173 seconds=6.1
+[2026-07-21T05:39:10.846976+00:00] local_exp4 S6 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=94 seconds=3.6
+[2026-07-21T05:39:14.645143+00:00] local_exp4 S6 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=82 seconds=3.2
+[2026-07-21T05:39:17.900075+00:00] local_exp4 S6 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=97 seconds=3.7
+[2026-07-21T05:39:21.637320+00:00] local_exp4 S6 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=93 seconds=3.6
+[2026-07-21T05:39:25.269075+00:00] local_exp4 S7 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.7500 best_epoch=48 seconds=2.1
+[2026-07-21T05:39:27.416829+00:00] local_exp4 S7 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.7833 best_epoch=53 seconds=2.3
+[2026-07-21T05:39:29.725676+00:00] local_exp4 S7 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.7500 best_epoch=106 seconds=4.0
+[2026-07-21T05:39:33.795532+00:00] local_exp4 S7 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.6833 best_epoch=125 seconds=4.6
+[2026-07-21T05:39:38.453047+00:00] local_exp4 S7 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.8167 best_epoch=84 seconds=3.3
+[2026-07-21T05:39:41.800329+00:00] local_exp4 S8 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9000 best_epoch=150 seconds=5.5
+[2026-07-21T05:39:47.301310+00:00] local_exp4 S8 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9000 best_epoch=140 seconds=5.2
+[2026-07-21T05:39:52.483316+00:00] local_exp4 S8 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9000 best_epoch=119 seconds=4.5
+[2026-07-21T05:39:57.026479+00:00] local_exp4 S8 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9000 best_epoch=129 seconds=4.8
+[2026-07-21T05:40:01.819971+00:00] local_exp4 S8 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9000 best_epoch=133 seconds=5.0
+[2026-07-21T05:40:06.801018+00:00] local_exp4 S10 fold=0 model=cardinal_fbms_extended seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9667 best_epoch=78 seconds=3.1
+[2026-07-21T05:40:09.925373+00:00] local_exp4 S10 fold=0 model=cardinal_fbms_extended seed=17
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.8833 best_epoch=100 seconds=3.8
+[2026-07-21T05:40:13.787990+00:00] local_exp4 S10 fold=0 model=cardinal_fbms_extended seed=27
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9833 best_epoch=134 seconds=4.9
+[2026-07-21T05:40:18.753009+00:00] local_exp4 S10 fold=0 model=cardinal_fbms_extended seed=37
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9167 best_epoch=108 seconds=4.1
+[2026-07-21T05:40:22.835592+00:00] local_exp4 S10 fold=0 model=cardinal_fbms_extended seed=47
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/braindecode/modules/filter.py:168: UserWarning: Creating the filter banks equally divided in the interval 4Hz to 40Hz with almost equal bandwidths. If you want a specific interval, please specify 'band_filters' as a list of tuples.
+  warn(
+  BA=0.9333 best_epoch=150 seconds=5.5
+wrote /home/user/Desktop/eegthingy_local_allmodels_20260721/results/local_all_43_formal_v1/artifacts/cardinal_fbms_extended.json

@@ -54,11 +54,26 @@ def _fit_predict(
     device: str,
     augment: bool,
 ) -> tuple[np.ndarray, int]:
+    if arch == "riemann":
+        # Non-transductive classical reference (no .calibrate on the test set),
+        # fair vs the conv nets.  The decisive L0 fork: can a fixed-band geometric
+        # method beat ShallowConvNet at Cho2017's data scale?
+        from .baselines import RiemannianTangentLogistic
+
+        estimator = RiemannianTangentLogistic().fit(cov[train], y[train])
+        return estimator.predict_proba(cov[test]), 0
+    if arch == "geoadapt_anchor":
+        # GeoAdaptNet's log-Euclidean tangent features + a convex L2 head (the
+        # measured local head-fix): no SGD, no residual, non-transductive.
+        from .tangent_anchor import TangentAnchorClassifier
+
+        estimator = TangentAnchorClassifier().fit(cov[train], y[train])
+        return estimator.predict_proba(cov[test]), estimator.param_count_
     inner_train, inner_val = _stratified_val(y[train], seed)
     tr, va = train[inner_train], train[inner_val]
     if arch == "geoadapt":
         set_reproducible_seed(seed)
-        model = GeoAdaptNet(auxiliary_intent=False)
+        model = GeoAdaptNet(n_bands=cov.shape[1], auxiliary_intent=False)
         config = TrainConfig(
             epochs=180,
             patience=25,
@@ -77,6 +92,21 @@ def _fit_predict(
             result.model, CovarianceDataset(cov[test], y[test]), device=device, branch="full"
         )
         return probs, model.parameter_count
+    if arch in ("geoadapt_fb", "geoadapt_fbsp"):
+        from .augment import left_right_swap_index
+        from .filterbank_net import FilterBankSPDClassifier
+
+        clf = FilterBankSPDClassifier(
+            n_bands=cov.shape[1],
+            sfreq=SFREQ,
+            seed=seed,
+            device=device,
+            reduced_dim=8 if arch == "geoadapt_fbsp" else None,
+            lr_swap_index=left_right_swap_index(CHANNELS) if augment else None,
+            lr_swap_prob=0.5 if augment else 0.0,
+        )
+        clf.fit(broad[tr], y[tr], broad[va], y[va])
+        return clf.predict_proba(broad[test]), clf.param_count_
     clf = TorchEEGClassifier(
         arch,
         n_times=broad.shape[-1],
@@ -98,10 +128,17 @@ def run(
     folds: int,
     device: str,
     augment: bool,
+    bands: str | None = None,
 ) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
     for subject in subjects:
-        data = load_cho_subject(subject)
+        try:
+            data = load_cho_subject(subject, bands=bands)
+        except Exception as error:  # a few Cho2017 subjects are known to be unusable
+            print(f"  SKIP subject {subject}: {type(error).__name__}: {error}", flush=True)
+            skipped.append({"subject": str(subject), "error": f"{type(error).__name__}: {error}"})
+            continue
         cov, broad, y = data["covariances"], data["broadband"], data["labels"]
         splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=0)
         splits = list(splitter.split(np.zeros(len(y)), y))
@@ -136,6 +173,8 @@ def run(
         "folds_records": records,
         "archs": list(archs),
         "subjects": list(subjects),
+        "scored_subjects": sorted({r["subject"] for r in records}),
+        "skipped_subjects": skipped,
         "seeds": list(seeds),
         "n_folds": folds,
         "augment": bool(augment),
@@ -180,6 +219,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--bands", default="default", help="filter-bank preset: default|rich9|rich7")
     parser.add_argument(
         "--output", type=Path, default=PROJECT_ROOT / "deepnet" / "results" / "dnn_compare_cho2017.json"
     )
@@ -189,7 +229,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     subjects = _parse_subjects(args.subjects)
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
 
-    payload = run(archs, subjects, seeds, folds=args.folds, device=args.device, augment=args.augment)
+    payload = run(
+        archs, subjects, seeds, folds=args.folds, device=args.device,
+        augment=args.augment, bands=args.bands,
+    )
+    payload["bands"] = args.bands
     payload["summary"] = summarize(payload)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2))

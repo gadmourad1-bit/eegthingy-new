@@ -1,0 +1,74 @@
+riemann        S1  R4 BA=86.67% (0.7s)
+tangent_anchor S1  R4 BA=88.33% (0.2s)
+ea_fbcsp       S1  R4 BA=73.33% (0.3s)
+riemann        S3  R4 BA=91.67% (0.7s)
+tangent_anchor S3  R4 BA=91.67% (0.2s)
+ea_fbcsp       S3  R4 BA=86.67% (0.3s)
+riemann        S4  R4 BA=91.67% (0.6s)
+tangent_anchor S4  R4 BA=91.67% (0.2s)
+ea_fbcsp       S4  R4 BA=93.33% (0.3s)
+riemann        S5  R4 BA=100.00% (0.6s)
+tangent_anchor S5  R4 BA=100.00% (0.2s)
+ea_fbcsp       S5  R4 BA=100.00% (0.3s)
+riemann        S6  R4 BA=96.67% (0.5s)
+tangent_anchor S6  R4 BA=96.67% (0.2s)
+ea_fbcsp       S6  R4 BA=95.00% (0.3s)
+riemann        S7  R4 BA=70.00% (0.6s)
+tangent_anchor S7  R4 BA=70.00% (0.2s)
+ea_fbcsp       S7  R4 BA=76.67% (0.3s)
+riemann        S8  R4 BA=88.33% (0.7s)
+tangent_anchor S8  R4 BA=88.33% (0.2s)
+ea_fbcsp       S8  R4 BA=80.00% (0.3s)
+riemann        S10 R4 BA=91.67% (0.7s)
+tangent_anchor S10 R4 BA=91.67% (0.2s)
+ea_fbcsp       S10 R4 BA=93.33% (0.3s)
+{
+  "ea_fbcsp": {
+    "balanced_accuracy_mean": 0.8729166666666667,
+    "balanced_accuracy_std": 0.09674770822928594,
+    "n_records": 40,
+    "n_subjects": 8,
+    "subject_balanced_accuracy": {
+      "1": 0.7333333333333334,
+      "10": 0.9333333333333333,
+      "3": 0.8666666666666668,
+      "4": 0.9333333333333333,
+      "5": 1.0,
+      "6": 0.95,
+      "7": 0.7666666666666667,
+      "8": 0.8
+    }
+  },
+  "riemann": {
+    "balanced_accuracy_mean": 0.8958333333333333,
+    "balanced_accuracy_std": 0.08986321174650296,
+    "n_records": 40,
+    "n_subjects": 8,
+    "subject_balanced_accuracy": {
+      "1": 0.8666666666666668,
+      "10": 0.9166666666666667,
+      "3": 0.9166666666666667,
+      "4": 0.9166666666666667,
+      "5": 1.0,
+      "6": 0.9666666666666666,
+      "7": 0.7,
+      "8": 0.8833333333333332
+    }
+  },
+  "tangent_anchor": {
+    "balanced_accuracy_mean": 0.8979166666666667,
+    "balanced_accuracy_std": 0.08928174594355871,
+    "n_records": 40,
+    "n_subjects": 8,
+    "subject_balanced_accuracy": {
+      "1": 0.8833333333333332,
+      "10": 0.9166666666666667,
+      "3": 0.9166666666666667,
+      "4": 0.9166666666666667,
+      "5": 1.0,
+      "6": 0.9666666666666666,
+      "7": 0.7,
+      "8": 0.8833333333333332
+    }
+  }
+}

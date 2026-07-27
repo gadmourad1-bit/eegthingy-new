@@ -1,0 +1,83 @@
+[2026-07-21T05:53:37.629021+00:00] local_exp4 S1 fold=0 model=eegsym seed=7
+/home/user/Desktop/eegthingy_local_allmodels_20260721/.venv/lib/python3.12/site-packages/torch/nn/modules/conv.py:718: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at /pytorch/aten/src/ATen/native/Convolution.cpp:1024.)
+  return F.conv3d(
+  BA=0.5667 best_epoch=24 seconds=3.0
+[2026-07-21T05:53:41.773383+00:00] local_exp4 S1 fold=0 model=eegsym seed=17
+  BA=0.5000 best_epoch=0 seconds=1.0
+[2026-07-21T05:53:42.789437+00:00] local_exp4 S1 fold=0 model=eegsym seed=27
+  BA=0.5000 best_epoch=0 seconds=1.0
+[2026-07-21T05:53:43.812652+00:00] local_exp4 S1 fold=0 model=eegsym seed=37
+  BA=0.5000 best_epoch=8 seconds=1.5
+[2026-07-21T05:53:45.346363+00:00] local_exp4 S1 fold=0 model=eegsym seed=47
+  BA=0.5000 best_epoch=13 seconds=1.8
+[2026-07-21T05:53:47.217820+00:00] local_exp4 S3 fold=0 model=eegsym seed=7
+  BA=0.9167 best_epoch=158 seconds=11.0
+[2026-07-21T05:53:58.269539+00:00] local_exp4 S3 fold=0 model=eegsym seed=17
+  BA=0.9333 best_epoch=133 seconds=9.6
+[2026-07-21T05:54:07.861939+00:00] local_exp4 S3 fold=0 model=eegsym seed=27
+  BA=0.8167 best_epoch=133 seconds=9.5
+[2026-07-21T05:54:17.436786+00:00] local_exp4 S3 fold=0 model=eegsym seed=37
+  BA=0.9667 best_epoch=167 seconds=11.6
+[2026-07-21T05:54:29.116842+00:00] local_exp4 S3 fold=0 model=eegsym seed=47
+  BA=0.9333 best_epoch=137 seconds=9.8
+[2026-07-21T05:54:38.957504+00:00] local_exp4 S4 fold=0 model=eegsym seed=7
+  BA=0.8667 best_epoch=166 seconds=11.5
+[2026-07-21T05:54:50.493699+00:00] local_exp4 S4 fold=0 model=eegsym seed=17
+  BA=0.5000 best_epoch=0 seconds=1.0
+[2026-07-21T05:54:51.514153+00:00] local_exp4 S4 fold=0 model=eegsym seed=27
+  BA=0.5333 best_epoch=0 seconds=1.0
+[2026-07-21T05:54:52.540834+00:00] local_exp4 S4 fold=0 model=eegsym seed=37
+  BA=0.4500 best_epoch=121 seconds=8.7
+[2026-07-21T05:55:01.283530+00:00] local_exp4 S4 fold=0 model=eegsym seed=47
+  BA=0.6667 best_epoch=171 seconds=12.7
+[2026-07-21T05:55:13.977469+00:00] local_exp4 S5 fold=0 model=eegsym seed=7
+  BA=1.0000 best_epoch=155 seconds=11.9
+[2026-07-21T05:55:25.918026+00:00] local_exp4 S5 fold=0 model=eegsym seed=17
+  BA=0.9833 best_epoch=165 seconds=12.7
+[2026-07-21T05:55:38.674114+00:00] local_exp4 S5 fold=0 model=eegsym seed=27
+  BA=1.0000 best_epoch=175 seconds=12.9
+[2026-07-21T05:55:51.629853+00:00] local_exp4 S5 fold=0 model=eegsym seed=37
+  BA=0.5000 best_epoch=178 seconds=13.1
+[2026-07-21T05:56:04.722220+00:00] local_exp4 S5 fold=0 model=eegsym seed=47
+  BA=1.0000 best_epoch=166 seconds=12.6
+[2026-07-21T05:56:17.346147+00:00] local_exp4 S6 fold=0 model=eegsym seed=7
+  BA=0.5667 best_epoch=121 seconds=9.3
+[2026-07-21T05:56:26.672255+00:00] local_exp4 S6 fold=0 model=eegsym seed=17
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:56:27.771608+00:00] local_exp4 S6 fold=0 model=eegsym seed=27
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:56:28.877996+00:00] local_exp4 S6 fold=0 model=eegsym seed=37
+  BA=0.5000 best_epoch=19 seconds=2.4
+[2026-07-21T05:56:31.290577+00:00] local_exp4 S6 fold=0 model=eegsym seed=47
+  BA=0.4500 best_epoch=92 seconds=7.4
+[2026-07-21T05:56:38.713390+00:00] local_exp4 S7 fold=0 model=eegsym seed=7
+  BA=0.5333 best_epoch=114 seconds=8.8
+[2026-07-21T05:56:47.562047+00:00] local_exp4 S7 fold=0 model=eegsym seed=17
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:56:48.664972+00:00] local_exp4 S7 fold=0 model=eegsym seed=27
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:56:49.775292+00:00] local_exp4 S7 fold=0 model=eegsym seed=37
+  BA=0.5000 best_epoch=180 seconds=12.7
+[2026-07-21T05:57:02.543318+00:00] local_exp4 S7 fold=0 model=eegsym seed=47
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:57:03.655404+00:00] local_exp4 S8 fold=0 model=eegsym seed=7
+  BA=0.4833 best_epoch=45 seconds=4.2
+[2026-07-21T05:57:07.885895+00:00] local_exp4 S8 fold=0 model=eegsym seed=17
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:57:09.024504+00:00] local_exp4 S8 fold=0 model=eegsym seed=27
+  BA=0.5000 best_epoch=12 seconds=1.9
+[2026-07-21T05:57:10.975748+00:00] local_exp4 S8 fold=0 model=eegsym seed=37
+  BA=0.5000 best_epoch=78 seconds=6.4
+[2026-07-21T05:57:17.444815+00:00] local_exp4 S8 fold=0 model=eegsym seed=47
+  BA=0.4500 best_epoch=0 seconds=1.1
+[2026-07-21T05:57:18.557360+00:00] local_exp4 S10 fold=0 model=eegsym seed=7
+  BA=0.6833 best_epoch=43 seconds=4.0
+[2026-07-21T05:57:22.624216+00:00] local_exp4 S10 fold=0 model=eegsym seed=17
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:57:23.726879+00:00] local_exp4 S10 fold=0 model=eegsym seed=27
+  BA=0.5000 best_epoch=0 seconds=1.1
+[2026-07-21T05:57:24.836731+00:00] local_exp4 S10 fold=0 model=eegsym seed=37
+  BA=0.5000 best_epoch=40 seconds=3.8
+[2026-07-21T05:57:28.696230+00:00] local_exp4 S10 fold=0 model=eegsym seed=47
+  BA=0.5000 best_epoch=36 seconds=3.6
+wrote /home/user/Desktop/eegthingy_local_allmodels_20260721/results/local_all_43_formal_v1/artifacts/eegsym.json

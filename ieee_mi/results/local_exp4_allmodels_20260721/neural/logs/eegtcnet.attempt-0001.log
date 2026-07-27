@@ -1,0 +1,81 @@
+[2026-07-21T05:30:13.860595+00:00] local_exp4 S1 fold=0 model=eegtcnet seed=7
+  BA=0.6500 best_epoch=199 seconds=5.0
+[2026-07-21T05:30:19.995037+00:00] local_exp4 S1 fold=0 model=eegtcnet seed=17
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:30:20.372547+00:00] local_exp4 S1 fold=0 model=eegtcnet seed=27
+  BA=0.5000 best_epoch=199 seconds=4.7
+[2026-07-21T05:30:25.122838+00:00] local_exp4 S1 fold=0 model=eegtcnet seed=37
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:30:25.506267+00:00] local_exp4 S1 fold=0 model=eegtcnet seed=47
+  BA=0.5833 best_epoch=194 seconds=4.7
+[2026-07-21T05:30:30.182159+00:00] local_exp4 S3 fold=0 model=eegtcnet seed=7
+  BA=0.7500 best_epoch=113 seconds=3.0
+[2026-07-21T05:30:33.239690+00:00] local_exp4 S3 fold=0 model=eegtcnet seed=17
+  BA=0.8333 best_epoch=184 seconds=4.5
+[2026-07-21T05:30:37.887206+00:00] local_exp4 S3 fold=0 model=eegtcnet seed=27
+  BA=0.8667 best_epoch=132 seconds=3.5
+[2026-07-21T05:30:41.402683+00:00] local_exp4 S3 fold=0 model=eegtcnet seed=37
+  BA=0.8667 best_epoch=199 seconds=4.7
+[2026-07-21T05:30:46.129956+00:00] local_exp4 S3 fold=0 model=eegtcnet seed=47
+  BA=0.7833 best_epoch=84 seconds=2.4
+[2026-07-21T05:30:48.521446+00:00] local_exp4 S4 fold=0 model=eegtcnet seed=7
+  BA=0.8000 best_epoch=199 seconds=4.7
+[2026-07-21T05:30:53.297502+00:00] local_exp4 S4 fold=0 model=eegtcnet seed=17
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:30:53.675158+00:00] local_exp4 S4 fold=0 model=eegtcnet seed=27
+  BA=0.9333 best_epoch=192 seconds=4.6
+[2026-07-21T05:30:58.340014+00:00] local_exp4 S4 fold=0 model=eegtcnet seed=37
+  BA=0.5000 best_epoch=17 seconds=0.8
+[2026-07-21T05:30:59.116412+00:00] local_exp4 S4 fold=0 model=eegtcnet seed=47
+  BA=0.8500 best_epoch=193 seconds=4.7
+[2026-07-21T05:31:03.804382+00:00] local_exp4 S5 fold=0 model=eegtcnet seed=7
+  BA=0.9667 best_epoch=194 seconds=4.7
+[2026-07-21T05:31:08.522284+00:00] local_exp4 S5 fold=0 model=eegtcnet seed=17
+  BA=1.0000 best_epoch=193 seconds=4.5
+[2026-07-21T05:31:13.036169+00:00] local_exp4 S5 fold=0 model=eegtcnet seed=27
+  BA=0.9833 best_epoch=192 seconds=4.6
+[2026-07-21T05:31:17.702525+00:00] local_exp4 S5 fold=0 model=eegtcnet seed=37
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:18.088404+00:00] local_exp4 S5 fold=0 model=eegtcnet seed=47
+  BA=1.0000 best_epoch=155 seconds=4.0
+[2026-07-21T05:31:22.141087+00:00] local_exp4 S6 fold=0 model=eegtcnet seed=7
+  BA=0.9667 best_epoch=198 seconds=4.7
+[2026-07-21T05:31:26.899147+00:00] local_exp4 S6 fold=0 model=eegtcnet seed=17
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:27.273504+00:00] local_exp4 S6 fold=0 model=eegtcnet seed=27
+  BA=0.9667 best_epoch=193 seconds=4.7
+[2026-07-21T05:31:31.966591+00:00] local_exp4 S6 fold=0 model=eegtcnet seed=37
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:32.348185+00:00] local_exp4 S6 fold=0 model=eegtcnet seed=47
+  BA=0.9833 best_epoch=197 seconds=4.7
+[2026-07-21T05:31:37.071329+00:00] local_exp4 S7 fold=0 model=eegtcnet seed=7
+  BA=0.4833 best_epoch=19 seconds=0.8
+[2026-07-21T05:31:37.945857+00:00] local_exp4 S7 fold=0 model=eegtcnet seed=17
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:38.322311+00:00] local_exp4 S7 fold=0 model=eegtcnet seed=27
+  BA=0.6167 best_epoch=194 seconds=4.6
+[2026-07-21T05:31:42.977657+00:00] local_exp4 S7 fold=0 model=eegtcnet seed=37
+  BA=0.4833 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:43.363249+00:00] local_exp4 S7 fold=0 model=eegtcnet seed=47
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:43.749818+00:00] local_exp4 S8 fold=0 model=eegtcnet seed=7
+  BA=0.4500 best_epoch=20 seconds=0.8
+[2026-07-21T05:31:44.617001+00:00] local_exp4 S8 fold=0 model=eegtcnet seed=17
+  BA=0.5000 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:44.996168+00:00] local_exp4 S8 fold=0 model=eegtcnet seed=27
+  BA=0.7833 best_epoch=195 seconds=4.7
+[2026-07-21T05:31:49.723134+00:00] local_exp4 S8 fold=0 model=eegtcnet seed=37
+  BA=0.4833 best_epoch=0 seconds=0.4
+[2026-07-21T05:31:50.108875+00:00] local_exp4 S8 fold=0 model=eegtcnet seed=47
+  BA=0.9000 best_epoch=197 seconds=4.7
+[2026-07-21T05:31:54.843954+00:00] local_exp4 S10 fold=0 model=eegtcnet seed=7
+  BA=0.7500 best_epoch=191 seconds=4.5
+[2026-07-21T05:31:59.370506+00:00] local_exp4 S10 fold=0 model=eegtcnet seed=17
+  BA=0.5000 best_epoch=0 seconds=0.3
+[2026-07-21T05:31:59.726881+00:00] local_exp4 S10 fold=0 model=eegtcnet seed=27
+  BA=0.9167 best_epoch=194 seconds=4.4
+[2026-07-21T05:32:04.128526+00:00] local_exp4 S10 fold=0 model=eegtcnet seed=37
+  BA=0.4000 best_epoch=0 seconds=0.3
+[2026-07-21T05:32:04.491875+00:00] local_exp4 S10 fold=0 model=eegtcnet seed=47
+  BA=0.7833 best_epoch=198 seconds=4.4
+wrote /home/user/Desktop/eegthingy_local_allmodels_20260721/results/local_all_43_formal_v1/artifacts/eegtcnet.json

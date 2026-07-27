@@ -31,7 +31,7 @@ from .engine import CovarianceDataset, TrainConfig, predict_proba, set_reproduci
 from .model import GeoAdaptNet
 
 NEURAL_ARCHS = ("geoadapt", *ARCHS.keys())
-CLASSICAL_ARCHS = ("fbcsp", "riemann")
+CLASSICAL_ARCHS = ("fbcsp", "riemann", "geoadapt_anchor")
 ALL_ARCHS = (*NEURAL_ARCHS, *CLASSICAL_ARCHS)
 
 
@@ -154,6 +154,13 @@ def _score(
         probs, params, secs = _geoadapt_probs(
             data, train_rows, val_rows, test_rows, seed=seed, device=device, augment=augment
         )
+    elif arch == "geoadapt_anchor":
+        from .tangent_anchor import TangentAnchorClassifier
+
+        started = time.time()
+        est = TangentAnchorClassifier().fit(data.covariances[train_rows], data.labels[train_rows])
+        probs = est.predict_proba(data.covariances[test_rows])
+        params, secs = est.param_count_, time.time() - started
     elif arch in ARCHS:
         probs, params, secs = _conv_probs(
             arch, data, train_rows, val_rows, test_rows, seed=seed, device=device, augment=augment
