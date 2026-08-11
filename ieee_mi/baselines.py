@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib.machinery
 import math
-import importlib.util
 import os
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -30,6 +30,7 @@ from .models import (
     ScopeConfig,
     ScopeNet,
 )
+from .tcformer_source import _read_unique_regular_bytes, verify_tcformer_source
 
 
 class CorrectedCTNet(nn.Module):
@@ -70,18 +71,31 @@ def _replace_eegsym_pools(model: nn.Module) -> None:
                 setattr(module, name, DeterministicHalfPool3d())
 
 
-def _load_module_from_path(name: str, path: Path) -> types.ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {name} from {path}")
-    module = importlib.util.module_from_spec(spec)
+def _load_verified_module(
+    name: str,
+    path: Path,
+    *,
+    root: Path,
+    expected_sha256: str,
+) -> types.ModuleType:
+    """Execute only descriptor-read bytes matching the pinned source digest."""
+
+    payload = _read_unique_regular_bytes(path, root=root)
+    observed = hashlib.sha256(payload).hexdigest()
+    if observed != expected_sha256:
+        raise RuntimeError(f"verified TCFormer source changed before import: {path}")
+    spec = importlib.machinery.ModuleSpec(name, loader=None, origin=str(path))
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__package__ = name.rpartition(".")[0]
+    module.__spec__ = spec
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    exec(compile(payload, str(path), "exec"), module.__dict__)
     return module
 
 
 def _official_tcformer_module() -> type[nn.Module]:
-    """Load only TCFormerModule from a pinned official checkout.
+    """Load only TCFormerModule from a pinned official vendored snapshot.
 
     This bypasses the repository package initializer, which imports its
     Lightning training stack.  The benchmark uses the pure PyTorch module and
@@ -93,43 +107,16 @@ def _official_tcformer_module() -> type[nn.Module]:
             "IEEE_MI_TCFORMER_ROOT",
             str(Path.cwd() / "third_party" / "TCFormer"),
         )
-    ).resolve()
-    expected_commit = "74c89b7ab8c64e4eb51e0f748dd87dd4c94e68c5"
-    if not (root / "models" / "tcformer.py").exists():
-        raise FileNotFoundError(
-            f"official TCFormer checkout is missing at {root}; expected commit {expected_commit}"
-        )
+    )
+    provenance = verify_tcformer_source(root)
+    root = Path(provenance["source_root"])
     cached = sys.modules.get("_ieee_tcformer.models.tcformer")
     if cached is not None:
+        if getattr(cached.TCFormerModule, "_ieee_provenance", None) != provenance:
+            raise RuntimeError(
+                "cached TCFormer module provenance differs from the verified source"
+            )
         return cached.TCFormerModule  # type: ignore[attr-defined, no-any-return]
-    try:
-        commit = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        dirty = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "status",
-                "--porcelain",
-                "--untracked-files=no",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise RuntimeError(f"could not verify official TCFormer checkout at {root}") from exc
-    if commit != expected_commit:
-        raise RuntimeError(
-            f"TCFormer checkout is {commit}; expected pinned commit {expected_commit}"
-        )
-    if dirty:
-        raise RuntimeError("official TCFormer checkout has tracked modifications")
 
     package = types.ModuleType("_ieee_tcformer")
     package.__path__ = [str(root)]  # type: ignore[attr-defined]
@@ -141,12 +128,19 @@ def _official_tcformer_module() -> type[nn.Module]:
     classification = types.ModuleType("_ieee_tcformer.models.classification_module")
     classification.ClassificationModule = nn.Module  # type: ignore[attr-defined]
     sys.modules[classification.__name__] = classification
-    _load_module_from_path(
-        "_ieee_tcformer.models.modules", root / "models" / "modules.py"
+    _load_verified_module(
+        "_ieee_tcformer.models.modules",
+        root / "models" / "modules.py",
+        root=root,
+        expected_sha256=provenance["file_identity"]["models/modules.py"]["sha256"],
     )
-    _load_module_from_path(
+    _load_verified_module(
         "_ieee_tcformer.models.channel_group_attention",
         root / "models" / "channel_group_attention.py",
+        root=root,
+        expected_sha256=provenance["file_identity"][
+            "models/channel_group_attention.py"
+        ]["sha256"],
     )
 
     utility_names = ("utils", "utils.weight_initialization", "utils.latency")
@@ -155,16 +149,26 @@ def _official_tcformer_module() -> type[nn.Module]:
         utilities = types.ModuleType("utils")
         utilities.__path__ = [str(root / "utils")]  # type: ignore[attr-defined]
         sys.modules["utils"] = utilities
-        _load_module_from_path(
-            "utils.weight_initialization", root / "utils" / "weight_initialization.py"
+        _load_verified_module(
+            "utils.weight_initialization",
+            root / "utils" / "weight_initialization.py",
+            root=root,
+            expected_sha256=provenance["file_identity"][
+                "utils/weight_initialization.py"
+            ]["sha256"],
         )
         latency = types.ModuleType("utils.latency")
         latency.measure_latency = lambda *args, **kwargs: (_ for _ in ()).throw(  # type: ignore[attr-defined]
             RuntimeError("latency helper is not part of the unified training harness")
         )
         sys.modules["utils.latency"] = latency
-        module = _load_module_from_path(
-            "_ieee_tcformer.models.tcformer", root / "models" / "tcformer.py"
+        module = _load_verified_module(
+            "_ieee_tcformer.models.tcformer",
+            root / "models" / "tcformer.py",
+            root=root,
+            expected_sha256=provenance["file_identity"][
+                "models/tcformer.py"
+            ]["sha256"],
         )
     finally:
         for name, old_module in previous.items():
@@ -172,11 +176,7 @@ def _official_tcformer_module() -> type[nn.Module]:
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = old_module
-    module.TCFormerModule._ieee_provenance = {  # type: ignore[attr-defined]
-        "repository": str(root),
-        "commit": commit,
-        "tracked_dirty": False,
-    }
+    module.TCFormerModule._ieee_provenance = provenance  # type: ignore[attr-defined]
     return module.TCFormerModule  # type: ignore[attr-defined, no-any-return]
 
 

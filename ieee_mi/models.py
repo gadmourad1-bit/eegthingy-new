@@ -1597,7 +1597,11 @@ class ExpandedMaxNormLinear(nn.Linear):
         if extra_features <= 0:
             raise ValueError("extra_features must be positive")
         source_weight = floor.weight.detach()
-        max_norm: float | None = None
+        max_norm: float | None = (
+            floor.max_norm
+            if isinstance(floor, ExpandedMaxNormLinear)
+            else None
+        )
         parametrizations = getattr(floor, "parametrizations", None)
         if parametrizations is not None and hasattr(parametrizations, "weight"):
             weight_stack = parametrizations.weight

@@ -1,0 +1,55 @@
+# Python and UV environments
+.venv/
+.venv-test/
+.venv-docs/
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*~
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Uncurated EEG and participant-derived runtime material. The reviewed sealed
+# metric tables already tracked under results/ are an explicit exception.
+data/
+cache/
+caches/
+raw/
+derived/
+predictions/
+checkpoints/
+runs/
+scratch/
+*.edf
+*.bdf
+*.gdf
+*.fif
+*.set
+*.vhdr
+*.vmrk
+*.eeg
+*.npz
+*.npy
+
+# Runtime residue. Curated aggregate files already tracked under results/ and
+# reports/ are intentionally not ignored.
+logs/
+*.log
+*.pid
+*.tmp
+*.stage-*

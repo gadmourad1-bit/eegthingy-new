@@ -1,0 +1,25 @@
+{
+  "architecture": {
+    "dropout": 0.25,
+    "dynamics_channels": 16,
+    "raw_rank": 12,
+    "tangent_rank": 8,
+    "temporal_filters": 32
+  },
+  "model": "architecture.hemiparity",
+  "schema": "deepnet-local-procedure-config-v1",
+  "training": {
+    "auxiliary_weight": 0.2,
+    "batch_size": 64,
+    "deterministic": true,
+    "epochs": 240,
+    "gate_balance_weight": 0.01,
+    "gradient_clip": 5.0,
+    "learning_rate": 0.0007,
+    "min_delta": 0.0001,
+    "patience": 40,
+    "tangent_learning_rate_scale": 0.15,
+    "weight_decay": 0.0007
+  },
+  "version": 1
+}

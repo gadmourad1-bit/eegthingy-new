@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -15,6 +17,108 @@ from deepnet.parity_net import HemiParityClassifier, ParityConfig
 
 
 CHANNELS_3 = ("Cz", "C3", "C4")
+
+EXPECTED_FROZEN_SETTINGS = {
+    "cameo": {
+        "auxiliary_weight": 0.25,
+        "batch_size": 64,
+        "dropout": 0.4,
+        "dynamics_channels": 16,
+        "dynamics_kernel": 15,
+        "epochs": 220,
+        "gradient_clip": 5.0,
+        "learning_rate": 0.0007,
+        "min_delta": 0.0001,
+        "mirror_penalty": 0.0,
+        "mixture_names": [
+            "geo",
+            "energy",
+            "dynamics",
+            "geo+energy",
+            "geo+dynamics",
+            "energy+dynamics",
+            "geo+energy+dynamics",
+        ],
+        "patience": 35,
+        "pool_kernel": 75,
+        "pool_stride": 15,
+        "rho_grid": [0.0, 0.25, 0.5, 0.75, 1.0],
+        "swap_probability": 0.5,
+        "temporal_filters": 32,
+        "temporal_kernel": 25,
+        "weight_decay": 0.0005,
+    },
+    "hemiparity": {
+        "auxiliary_weight": 0.2,
+        "batch_size": 64,
+        "deterministic": True,
+        "dropout": 0.25,
+        "dynamics_channels": 16,
+        "epochs": 240,
+        "gate_balance_weight": 0.01,
+        "gradient_clip": 5.0,
+        "learning_rate": 0.0007,
+        "min_delta": 0.0001,
+        "patience": 40,
+        "raw_rank": 12,
+        "tangent_learning_rate_scale": 0.15,
+        "tangent_rank": 8,
+        "temporal_filters": 32,
+        "weight_decay": 0.0007,
+    },
+    "parity_fuse": {
+        "batch_size": 64,
+        "deterministic": True,
+        "dynamics_channels": 24,
+        "dynamics_kernel": 15,
+        "epochs": 240,
+        "fusion_dim": 32,
+        "gate_hidden": 24,
+        "gradient_clip": 5.0,
+        "learning_rate": 0.0008,
+        "min_delta": 0.0001,
+        "patience": 40,
+        "raw_dim": 40,
+        "residual_penalty": 0.01,
+        "tangent_band_dim": 12,
+        "tangent_dim": 32,
+        "tangent_hidden": 24,
+        "temporal_filters": 16,
+        "temporal_kernel": 31,
+        "weight_decay": 0.0006,
+    },
+    "orbit_v3": {
+        "batch_size": 64,
+        "candidate_names": [
+            "fused",
+            "anchor",
+            "raw_mean",
+            "uniform",
+            "energy",
+            "dynamics",
+        ],
+        "deterministic": True,
+        "dynamics_channels": 16,
+        "dynamics_kernel": 15,
+        "epochs": 240,
+        "gate_hidden": 16,
+        "gradient_clip": 5.0,
+        "learning_rate": 0.0007,
+        "min_delta": 0.0001,
+        "normalization": "batch",
+        "orientation_hidden": 12,
+        "orientation_penalty": 0.0,
+        "orientation_rank": 8,
+        "patience": 40,
+        "pool_kernel": 75,
+        "pool_stride": 15,
+        "temporal_filters": 32,
+        "temporal_kernel": 25,
+        "transport_auxiliary_weight": 0.35,
+        "view_auxiliary_weight": 0.25,
+        "weight_decay": 0.0005,
+    },
+}
 
 
 def _synthetic_source(
@@ -69,7 +173,7 @@ def test_exact_local_split_contract_is_120_60_180_60() -> None:
     assert contract["prediction_only_test"]["runs"] == ["4"]
 
 
-def test_frozen_configuration_artifacts_still_match_the_registry() -> None:
+def test_config_only_files_preserve_every_frozen_hyperparameter() -> None:
     expected_types = {
         "cameo": CAMEOConfig,
         "hemiparity": ParityConfig,
@@ -83,7 +187,165 @@ def test_frozen_configuration_artifacts_still_match_the_registry() -> None:
         assert isinstance(config, expected_type)
         assert config.seed == 37
         assert config.device == "cpu"
-        assert len(identity["artifact_sha256"]) == 64
+        runtime = outer._json_safe(asdict(config))
+        runtime.pop("seed")
+        runtime.pop("device")
+        assert runtime == EXPECTED_FROZEN_SETTINGS[model_name]
+        assert identity["config"] == EXPECTED_FROZEN_SETTINGS[model_name]
+        assert identity["schema"] == outer.PROCEDURE_CONFIG_SCHEMA
+        assert identity["version"] == outer.PROCEDURE_CONFIG_VERSION
+        assert identity["model"] == (
+            outer._PROCEDURE_CONFIGS[model_name].stable_id
+        )
+        assert identity["config_file"].startswith(
+            "configs/local_procedures/"
+        )
+        assert "/results/" not in identity["config_file"]
+        assert identity["config_file_bytes"] == (
+            outer._PROCEDURE_CONFIGS[model_name].size_bytes
+        )
+        assert len(identity["config_file_sha256"]) == 64
+        assert len(identity["settings_sha256"]) == 64
+        assert identity["runtime_overrides"] == {
+            "seed": 37,
+            "device": "cpu",
+        }
+
+
+def test_source_identity_contains_code_and_only_config_only_inputs() -> None:
+    config_paths = {
+        spec.relative_path for spec in outer._PROCEDURE_CONFIGS.values()
+    }
+    assert "deepnet/config.py" in outer._SOURCE_FILES
+    assert config_paths.issubset(outer._SOURCE_FILES)
+    assert not any("/results/" in path for path in outer._SOURCE_FILES)
+    manifest = outer._source_manifest()
+    assert "deepnet/config.py" in manifest
+    assert config_paths.issubset(manifest)
+    assert all(len(digest) == 64 for digest in manifest.values())
+    for model_name in outer.MODEL_NAMES:
+        _, identity = outer._load_frozen_config(
+            model_name, seed=37, device="cpu"
+        )
+        outer._validate_config_source_binding(identity, manifest)
+
+
+def test_source_identity_rejects_a_config_hash_mismatch() -> None:
+    _, identity = outer._load_frozen_config(
+        "cameo", seed=37, device="cpu"
+    )
+    manifest = outer._source_manifest()
+    manifest[identity["config_file"]] = "0" * 64
+    with pytest.raises(RuntimeError, match="source manifest"):
+        outer._validate_config_source_binding(identity, manifest)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    (
+        ("validation_accuracy", 0.99),
+        ("training_loss", [0.8, 0.4]),
+        ("test_labels", [0, 1]),
+        ("test_probability", [0.1, 0.9]),
+        ("result_summary", {"winner": "cameo"}),
+        ("seed", 47),
+        ("device", "cuda"),
+    ),
+)
+def test_config_loader_rejects_outcome_and_runtime_keys_before_hashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+    value: object,
+) -> None:
+    original = outer._PROCEDURE_CONFIGS["cameo"]
+    payload = outer._strict_json_load(
+        outer.PROJECT_ROOT / original.relative_path
+    )
+    payload["training"][key] = value
+    path = tmp_path / "tampered.json"
+    path.write_text(
+        json.dumps(payload, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        outer._PROCEDURE_CONFIGS,
+        "cameo",
+        replace(original, relative_path=str(path.resolve())),
+    )
+    with pytest.raises(ValueError, match="forbidden outcome/runtime key"):
+        outer._load_frozen_config("cameo", seed=7, device="cpu")
+
+
+@pytest.mark.parametrize("mutation", ("missing", "unknown"))
+def test_config_loader_rejects_missing_or_unknown_setting_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    original = outer._PROCEDURE_CONFIGS["cameo"]
+    payload = outer._strict_json_load(
+        outer.PROJECT_ROOT / original.relative_path
+    )
+    if mutation == "missing":
+        payload["training"].pop("epochs")
+    else:
+        payload["training"]["optimizer_beta"] = 0.9
+    path = tmp_path / "invalid-schema.json"
+    path.write_text(
+        json.dumps(payload, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        outer._PROCEDURE_CONFIGS,
+        "cameo",
+        replace(original, relative_path=str(path.resolve())),
+    )
+    with pytest.raises(ValueError, match="training fields"):
+        outer._load_frozen_config("cameo", seed=7, device="cpu")
+
+
+def test_config_loader_rejects_settings_only_hash_tampering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = outer._PROCEDURE_CONFIGS["cameo"]
+    payload = outer._strict_json_load(
+        outer.PROJECT_ROOT / original.relative_path
+    )
+    payload["training"]["epochs"] += 1
+    path = tmp_path / "tampered.json"
+    path.write_text(
+        json.dumps(payload, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        outer._PROCEDURE_CONFIGS,
+        "cameo",
+        replace(original, relative_path=str(path.resolve())),
+    )
+    with pytest.raises(RuntimeError, match="configuration changed"):
+        outer._load_frozen_config("cameo", seed=7, device="cpu")
+
+
+def test_config_loader_rejects_duplicate_json_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = outer._PROCEDURE_CONFIGS["cameo"]
+    path = tmp_path / "duplicate.json"
+    path.write_text(
+        '{"schema":"deepnet-local-procedure-config-v1",'
+        '"schema":"deepnet-local-procedure-config-v1"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        outer._PROCEDURE_CONFIGS,
+        "cameo",
+        replace(original, relative_path=str(path.resolve())),
+    )
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        outer._load_frozen_config("cameo", seed=7, device="cpu")
 
 
 def test_cameo_fixed_refit_freezes_validation_route() -> None:
@@ -363,7 +625,17 @@ def test_run_one_never_passes_prediction_only_rows_to_selection_or_refit(
         device: str = "cpu"
 
     def fake_load(*args, **kwargs):
-        return FakeConfig(), {"artifact_sha256": "a" * 64}
+        return FakeConfig(), {
+            "schema": outer.PROCEDURE_CONFIG_SCHEMA,
+            "version": outer.PROCEDURE_CONFIG_VERSION,
+            "model": "architecture.cameo",
+            "config_file": "configs/local_procedures/cameo_v1.json",
+            "config_file_bytes": 830,
+            "config_file_sha256": "a" * 64,
+            "settings_sha256": "b" * 64,
+            "config": {"epochs": 1},
+            "runtime_overrides": {"seed": 7, "device": "cpu"},
+        }
 
     def fake_selection(*args, **kwargs):
         calls.append("selection")
@@ -401,7 +673,17 @@ def test_run_one_never_passes_prediction_only_rows_to_selection_or_refit(
         covariance=covariance,
         split=(train, validation, test),
         split_contract={},
-        config_identity={"artifact_sha256": "a" * 64},
+        config_identity={
+            "schema": outer.PROCEDURE_CONFIG_SCHEMA,
+            "version": outer.PROCEDURE_CONFIG_VERSION,
+            "model": "architecture.cameo",
+            "config_file": "configs/local_procedures/cameo_v1.json",
+            "config_file_bytes": 830,
+            "config_file_sha256": "a" * 64,
+            "settings_sha256": "b" * 64,
+            "config": {"epochs": 1},
+            "runtime_overrides": {"seed": 7, "device": "cpu"},
+        },
     )
     assert calls == ["selection", "refit", "prediction"]
     assert record["prediction_only_test"]["metrics"]["balanced_accuracy"] == 0.5

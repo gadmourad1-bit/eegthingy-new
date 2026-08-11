@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
+import os
 import re
+import stat
+import zipfile
 from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
@@ -40,6 +44,16 @@ from .config import (
 
 FloatArray = NDArray[np.float32]
 IntArray = NDArray[np.int64]
+
+SUBJECT_CACHE_NPZ_MEMBERS: Final[tuple[str, ...]] = (
+    "x",
+    "y",
+    "positions",
+    "channel_names",
+    "sessions",
+    "runs",
+    "identity",
+)
 
 
 # ``PhysionetMI(imagined=True, executed=False)`` loads the original unilateral
@@ -321,6 +335,187 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_unique_regular_bytes(path: Path) -> bytes:
+    """Read one immutable cache leaf without following filesystem indirection.
+
+    Formal benchmark caches are evidence-bearing inputs.  Resolve neither a
+    symlinked ancestor nor a linked/special leaf, and open the leaf
+    nonblocking before parsing it.  The descriptor identity and metadata are
+    checked on both sides of the read so a pathname replacement or in-place
+    mutation cannot silently supply a different archive.
+    """
+
+    absolute = Path(os.path.abspath(path))
+    if absolute.name in {"", ".", ".."}:
+        raise RuntimeError(f"cache path has no regular-file leaf: {absolute}")
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    parent_descriptor = os.open(absolute.anchor, directory_flags)
+    try:
+        walked = Path(absolute.anchor)
+        for component in absolute.parts[1:-1]:
+            walked /= component
+            try:
+                child_descriptor = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=parent_descriptor,
+                )
+            except FileNotFoundError as error:
+                raise FileNotFoundError(walked) from error
+            except OSError as error:
+                raise RuntimeError(
+                    f"cache ancestor is not a real directory: {walked}"
+                ) from error
+            child_stat = os.fstat(child_descriptor)
+            if not stat.S_ISDIR(child_stat.st_mode):
+                os.close(child_descriptor)
+                raise RuntimeError(
+                    f"cache ancestor is not a real directory: {walked}"
+                )
+            os.close(parent_descriptor)
+            parent_descriptor = child_descriptor
+
+        try:
+            path_stat = os.stat(
+                absolute.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError as error:
+            raise FileNotFoundError(absolute) from error
+        if (
+            stat.S_ISLNK(path_stat.st_mode)
+            or not stat.S_ISREG(path_stat.st_mode)
+            or path_stat.st_nlink != 1
+        ):
+            raise RuntimeError(
+                f"cache leaf must be a regular single-link file: {absolute}"
+            )
+
+        file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        file_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(
+            absolute.name,
+            file_flags,
+            dir_fd=parent_descriptor,
+        )
+        before = os.fstat(descriptor)
+        stable_fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or any(
+                getattr(before, name) != getattr(path_stat, name)
+                for name in stable_fields
+            )
+        ):
+            os.close(descriptor)
+            raise RuntimeError(
+                f"cache leaf changed while it was being opened: {absolute}"
+            )
+        try:
+            chunks: list[bytes] = []
+            while True:
+                try:
+                    chunk = os.read(descriptor, 1024 * 1024)
+                except InterruptedError:
+                    continue
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            try:
+                final_path_stat = os.stat(
+                    absolute.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError as error:
+                raise RuntimeError(
+                    f"cache leaf changed while it was read: {absolute}"
+                ) from error
+            if any(
+                getattr(before, name) != getattr(observed, name)
+                for observed in (after, final_path_stat)
+                for name in stable_fields
+            ):
+                raise RuntimeError(f"cache leaf changed while it was read: {absolute}")
+            payload = b"".join(chunks)
+            if len(payload) != before.st_size:
+                raise RuntimeError(f"cache leaf read was incomplete: {absolute}")
+            return payload
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
+def _validate_npz_member_contract(
+    payload: bytes,
+    *,
+    expected_members: Sequence[str],
+    source: str,
+) -> tuple[str, ...]:
+    """Validate raw ZIP members before NumPy is allowed to resolve names.
+
+    ``numpy.load`` exposes a de-duplicated logical-name view and can therefore
+    hide duplicate ZIP entries. Evidence-bearing NPZ inputs must contain one
+    exact ordered ``.npy`` member for every declared logical member.
+    """
+
+    expected = tuple(str(value) for value in expected_members)
+    if (
+        not expected
+        or len(expected) != len(set(expected))
+        or any(
+            not value
+            or value in {".", ".."}
+            or "/" in value
+            or "\\" in value
+            for value in expected
+        )
+    ):
+        raise RuntimeError("NPZ member contract itself is invalid")
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), mode="r") as archive:
+            infos = archive.infolist()
+    except (OSError, zipfile.BadZipFile) as error:
+        raise RuntimeError(f"{source} is not a valid NPZ archive") from error
+    raw_names = tuple(info.filename for info in infos)
+    expected_raw_names = tuple(f"{name}.npy" for name in expected)
+    if (
+        len(infos) != len(expected)
+        or len(raw_names) != len(set(raw_names))
+        or raw_names != expected_raw_names
+        or any(
+            info.is_dir()
+            or info.flag_bits & 0x1
+            or info.filename.startswith(("/", "\\"))
+            or "\\" in info.filename
+            or any(
+                component in {"", ".", ".."}
+                for component in Path(info.filename).parts
+            )
+            for info in infos
+        )
+    ):
+        raise RuntimeError(
+            f"{source} raw ZIP members differ from the exact ordered NPZ "
+            f"contract: {list(raw_names)}"
+        )
+    return expected
 
 
 def _local_exp4_path(root: Path, subject: int, run: int) -> Path:
@@ -709,27 +904,65 @@ def load_subject_cache(
     profile = validate_montage_profile(montage_profile)
     requested_channels = channels_for_dataset(dataset, profile)
     path = _cache_path(Path(cache_root), dataset, subject, profile)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    with np.load(path, allow_pickle=False) as archive:
-        result = {key: archive[key].copy() for key in archive.files}
+    payload = _read_unique_regular_bytes(path)
+    expected_members = _validate_npz_member_contract(
+        payload,
+        expected_members=SUBJECT_CACHE_NPZ_MEMBERS,
+        source=str(path),
+    )
+    with np.load(io.BytesIO(payload), allow_pickle=False) as archive:
+        if tuple(archive.files) != expected_members:
+            raise RuntimeError(
+                f"cache {path} NumPy members differ from the raw ZIP contract"
+            )
+        result = {key: archive[key].copy() for key in expected_members}
     result["identity"] = json.loads(str(result["identity"].item()))
     identity = result["identity"]
-    required = {
-        "x",
-        "y",
-        "positions",
-        "channel_names",
-        "sessions",
-        "runs",
-        "identity",
-    }
-    if set(result) != required:
+    if tuple(result) != SUBJECT_CACHE_NPZ_MEMBERS:
         raise RuntimeError(
             f"cache {path} fields differ from the frozen schema: {sorted(result)}"
         )
-    dataset_identity = identity.get("dataset", {})
-    if dataset_identity.get("key") != dataset or int(identity.get("subject", -1)) != subject:
+    if not isinstance(identity, dict):
+        raise RuntimeError(f"cache identity is not an object for {dataset} S{subject}")
+    expected_identity_keys = {
+        "array_sha256",
+        "channels",
+        "coordinates",
+        "dataset",
+        "montage_profile",
+        "preprocessing",
+        "shape",
+        "subject",
+    }
+    if dataset == "local_exp4":
+        expected_identity_keys.add("source_manifest")
+    if set(identity) != expected_identity_keys:
+        raise RuntimeError(
+            f"cache identity fields differ from the frozen schema for "
+            f"{dataset} S{subject}: {sorted(identity)}"
+        )
+    if (
+        not isinstance(identity["array_sha256"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", identity["array_sha256"]) is None
+        or not isinstance(identity["channels"], list)
+        or any(not isinstance(value, str) for value in identity["channels"])
+        or not isinstance(identity["shape"], list)
+        or len(identity["shape"]) != 3
+        or any(type(value) is not int or value <= 0 for value in identity["shape"])
+        or not isinstance(identity["montage_profile"], str)
+    ):
+        raise RuntimeError(
+            f"cache identity value types are invalid for {dataset} S{subject}"
+        )
+    expected_dataset_identity = json.loads(
+        json.dumps(asdict(dataset_spec(dataset)), sort_keys=True)
+    )
+    dataset_identity = identity.get("dataset")
+    if (
+        dataset_identity != expected_dataset_identity
+        or type(identity.get("subject")) is not int
+        or identity["subject"] != subject
+    ):
         raise RuntimeError(f"cache identity does not match {dataset} S{subject}")
     if identity.get("montage_profile") != profile:
         raise RuntimeError(f"cache montage profile is stale for {dataset} S{subject}")
@@ -750,6 +983,47 @@ def load_subject_cache(
     )
     if identity.get("coordinates") != expected_coordinates:
         raise RuntimeError(f"cache coordinate contract is stale for {dataset} S{subject}")
+    if dataset == "local_exp4":
+        source_manifest = identity["source_manifest"]
+        expected_runs = LOCAL_EXP4_SUBJECT_RUNS[subject]
+        if (
+            not isinstance(source_manifest, list)
+            or len(source_manifest) != len(expected_runs)
+        ):
+            raise RuntimeError(
+                f"cache source manifest is invalid for {dataset} S{subject}"
+            )
+        for source, expected_run in zip(
+            source_manifest, expected_runs, strict=True
+        ):
+            if not isinstance(source, dict) or set(source) != {
+                "filename",
+                "run",
+                "sha256",
+                "size_bytes",
+                "subject",
+            }:
+                raise RuntimeError(
+                    f"cache source manifest schema is invalid for "
+                    f"{dataset} S{subject}"
+                )
+            if (
+                type(source["run"]) is not int
+                or source["run"] != expected_run
+                or type(source["subject"]) is not int
+                or source["subject"] != subject
+                or type(source["size_bytes"]) is not int
+                or source["size_bytes"] <= 0
+                or not isinstance(source["filename"], str)
+                or source["filename"]
+                != f"exp4_subject{subject}_training_{expected_run}_mi_raw.fif"
+                or not isinstance(source["sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", source["sha256"]) is None
+            ):
+                raise RuntimeError(
+                    f"cache source manifest values are invalid for "
+                    f"{dataset} S{subject}"
+                )
     if list(result["x"].shape) != identity.get("shape"):
         raise RuntimeError(f"cache shape identity is stale for {dataset} S{subject}")
     expected_n_times = int(expected_preprocessing["n_times"])

@@ -26,10 +26,11 @@ import json
 import math
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -76,33 +77,150 @@ SOURCE_BANDS_HZ: tuple[tuple[float, float], ...] = (
 )
 FILTER_ORDER = 4
 
-# These completed development artifacts pin the exact architecture/training
-# configurations.  Only seed and execution device are changed per record.
-_FROZEN_CONFIGS: dict[str, tuple[str, str, type[Any]]] = {
-    "cameo": (
-        "deepnet/results/cameo/cameo_v1_frozen_local_confirm_3seeds.json",
-        "31df3bb3b2de80f980c59c77f75e687256100593dcc3defbabae4e52353fd963",
-        CAMEOConfig,
+PROCEDURE_CONFIG_SCHEMA = "deepnet-local-procedure-config-v1"
+PROCEDURE_CONFIG_VERSION = 1
+
+
+@dataclass(frozen=True)
+class _ProcedureConfigSpec:
+    relative_path: str
+    size_bytes: int
+    sha256: str
+    stable_id: str
+    config_class: type[Any]
+    architecture_fields: tuple[str, ...]
+    training_fields: tuple[str, ...]
+
+
+# These configuration-only files contain no scores, predictions, labels,
+# cohorts, or other result material. Seed and execution device are runtime
+# overrides and are deliberately absent from the frozen files.
+_PROCEDURE_CONFIGS: dict[str, _ProcedureConfigSpec] = {
+    "cameo": _ProcedureConfigSpec(
+        relative_path="configs/local_procedures/cameo_v1.json",
+        size_bytes=830,
+        sha256="23d07dcfc03bac8ac1e0cb076621850d5738df5a7d31fa7ea89ba42b3dfb2336",
+        stable_id="architecture.cameo",
+        config_class=CAMEOConfig,
+        architecture_fields=(
+            "dropout",
+            "dynamics_channels",
+            "dynamics_kernel",
+            "pool_kernel",
+            "pool_stride",
+            "temporal_filters",
+            "temporal_kernel",
+        ),
+        training_fields=(
+            "auxiliary_weight",
+            "batch_size",
+            "epochs",
+            "gradient_clip",
+            "learning_rate",
+            "min_delta",
+            "mirror_penalty",
+            "mixture_names",
+            "patience",
+            "rho_grid",
+            "swap_probability",
+            "weight_decay",
+        ),
     ),
-    "hemiparity": (
-        "deepnet/results/parity/hemiparity_v1_local_dev.json",
-        "34ab7ecf6ef436493acc836df003b3037d6ad109384af38264ece0509289d1a8",
-        ParityConfig,
+    "hemiparity": _ProcedureConfigSpec(
+        relative_path="configs/local_procedures/hemiparity_v1.json",
+        size_bytes=570,
+        sha256="0978f53bbc603378052d4ea97355641fe454d250f2745593ead239df4eb463cc",
+        stable_id="architecture.hemiparity",
+        config_class=ParityConfig,
+        architecture_fields=(
+            "dropout",
+            "dynamics_channels",
+            "raw_rank",
+            "tangent_rank",
+            "temporal_filters",
+        ),
+        training_fields=(
+            "auxiliary_weight",
+            "batch_size",
+            "deterministic",
+            "epochs",
+            "gate_balance_weight",
+            "gradient_clip",
+            "learning_rate",
+            "min_delta",
+            "patience",
+            "tangent_learning_rate_scale",
+            "weight_decay",
+        ),
     ),
-    "parity_fuse": (
-        "deepnet/results/parity/parity_fuse_v1_local_dev_screen.json",
-        "2da8c0d389038d543317da22c6ee533050f796082da22fa3b06927149c300512",
-        ParityFuseConfig,
+    "parity_fuse": _ProcedureConfigSpec(
+        relative_path="configs/local_procedures/parity_fuse_v1.json",
+        size_bytes=629,
+        sha256="c5a2e84163b49f2da7c47c359418aa790f7a9d6490c7e0bc48c9aa8be3f9c6fb",
+        stable_id="architecture.parity_fuse",
+        config_class=ParityFuseConfig,
+        architecture_fields=(
+            "dynamics_channels",
+            "dynamics_kernel",
+            "fusion_dim",
+            "gate_hidden",
+            "raw_dim",
+            "tangent_band_dim",
+            "tangent_dim",
+            "tangent_hidden",
+            "temporal_filters",
+            "temporal_kernel",
+        ),
+        training_fields=(
+            "batch_size",
+            "deterministic",
+            "epochs",
+            "gradient_clip",
+            "learning_rate",
+            "min_delta",
+            "patience",
+            "residual_penalty",
+            "weight_decay",
+        ),
     ),
-    "orbit_v3": (
-        "deepnet/results/parity/orbit_v3_batch_aux_local_dev.json",
-        "b55f7586c55cc6bb87d45f1f2074b8519d49146cbfb33bb9ff8897bc87826706",
-        OrbitTransportConfig,
+    "orbit_v3": _ProcedureConfigSpec(
+        relative_path="configs/local_procedures/orbit_v3.json",
+        size_bytes=849,
+        sha256="95edd8a374892e4f28a8feb4e3dfe4ffb32e415b4c3cca2d1ea4a6f89a72b456",
+        stable_id="architecture.orbit_v3",
+        config_class=OrbitTransportConfig,
+        architecture_fields=(
+            "dynamics_channels",
+            "dynamics_kernel",
+            "gate_hidden",
+            "normalization",
+            "orientation_hidden",
+            "orientation_rank",
+            "pool_kernel",
+            "pool_stride",
+            "temporal_filters",
+            "temporal_kernel",
+        ),
+        training_fields=(
+            "batch_size",
+            "candidate_names",
+            "deterministic",
+            "epochs",
+            "gradient_clip",
+            "learning_rate",
+            "min_delta",
+            "orientation_penalty",
+            "patience",
+            "transport_auxiliary_weight",
+            "view_auxiliary_weight",
+            "weight_decay",
+        ),
     ),
 }
 
 _SOURCE_FILES: tuple[str, ...] = (
     "deepnet/local_outer_refit_benchmark.py",
+    "deepnet/config.py",
     "deepnet/cameo_net.py",
     "deepnet/parity_net.py",
     "deepnet/parity_fuse_net.py",
@@ -112,6 +230,7 @@ _SOURCE_FILES: tuple[str, ...] = (
     "deepnet/spd.py",
     "ieee_mi/config.py",
     "ieee_mi/data.py",
+    *(spec.relative_path for spec in _PROCEDURE_CONFIGS.values()),
 )
 
 # Only these fitted, data-dependent initialization entries may differ between
@@ -121,6 +240,22 @@ _RESET_EXCLUSIONS: dict[str, tuple[str, ...]] = {
     "hemiparity": ("tangent_base.weight",),
     "parity_fuse": ("tangent_anchor_weight",),
     "orbit_v3": (),
+}
+_CONFIG_IDENTITY_KEYS = frozenset(
+    {
+        "schema",
+        "version",
+        "model",
+        "config_file",
+        "config_file_bytes",
+        "config_file_sha256",
+        "settings_sha256",
+        "config",
+        "runtime_overrides",
+    }
+)
+_IMMUTABLE_CONFIG_IDENTITY_KEYS = _CONFIG_IDENTITY_KEYS - {
+    "runtime_overrides"
 }
 
 
@@ -188,6 +323,200 @@ def _strict_json_load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} does not contain a JSON object")
     return value
+
+
+_OUTCOME_CONFIG_KEY_TOKENS = frozenset(
+    {
+        "accuracy",
+        "auc",
+        "confusion",
+        "f1",
+        "history",
+        "histories",
+        "kappa",
+        "label",
+        "labels",
+        "loss",
+        "losses",
+        "metric",
+        "metrics",
+        "outcome",
+        "outcomes",
+        "participant",
+        "participants",
+        "performance",
+        "precision",
+        "prediction",
+        "predictions",
+        "probabilities",
+        "probability",
+        "recall",
+        "record",
+        "records",
+        "result",
+        "results",
+        "roc",
+        "score",
+        "scores",
+        "sensitivity",
+        "specificity",
+        "subject",
+        "subjects",
+        "summary",
+        "summaries",
+        "target",
+        "targets",
+    }
+)
+_FORBIDDEN_CONFIG_KEYS = frozenset(
+    {
+        "best_epoch",
+        "best_validation_loss",
+        "cohort",
+        "command",
+        "dataset",
+        "device",
+        "environment",
+        "execution_environment",
+        "fit_seconds",
+        "fold",
+        "folds",
+        "repository",
+        "seed",
+        "seeds",
+        "selected_epoch",
+        "selected_epochs",
+        "split",
+        "splits",
+        "status",
+        "test_loss",
+        "validation_loss",
+    }
+)
+_ALLOWED_CONFIG_KEYS_WITH_OUTCOME_TOKENS = frozenset(
+    {
+        # This is a prespecified augmentation probability, not a prediction.
+        "swap_probability",
+    }
+)
+
+
+def _normalized_config_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+
+
+def _reject_outcome_like_config_keys(
+    value: Any, *, path: str = "config"
+) -> None:
+    """Reject result, cohort, runtime, or outcome fields at any nesting depth."""
+
+    if isinstance(value, Mapping):
+        for raw_key, child in value.items():
+            key = _normalized_config_key(raw_key)
+            tokens = frozenset(token for token in key.split("_") if token)
+            if (
+                key in _FORBIDDEN_CONFIG_KEYS
+                or (
+                    key not in _ALLOWED_CONFIG_KEYS_WITH_OUTCOME_TOKENS
+                    and tokens.intersection(_OUTCOME_CONFIG_KEY_TOKENS)
+                )
+            ):
+                raise ValueError(
+                    f"procedure configuration contains forbidden outcome/runtime "
+                    f"key {path}.{raw_key}"
+                )
+            _reject_outcome_like_config_keys(
+                child, path=f"{path}.{raw_key}"
+            )
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _reject_outcome_like_config_keys(
+                child, path=f"{path}[{index}]"
+            )
+
+
+def _validate_setting_value(value: Any, *, path: str) -> None:
+    if isinstance(value, bool) or isinstance(value, (str, int)):
+        return
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return
+        raise ValueError(f"{path} must be finite")
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_setting_value(child, path=f"{path}[{index}]")
+        return
+    raise ValueError(
+        f"{path} must be a JSON scalar or list of JSON scalars"
+    )
+
+
+def _validated_config_payload(
+    model_name: str,
+    spec: _ProcedureConfigSpec,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    _reject_outcome_like_config_keys(payload)
+    expected_top = {
+        "schema",
+        "version",
+        "model",
+        "architecture",
+        "training",
+    }
+    if set(payload) != expected_top:
+        raise ValueError(
+            "procedure configuration top-level fields differ from the "
+            f"config-only schema: missing={sorted(expected_top - set(payload))}, "
+            f"extra={sorted(set(payload) - expected_top)}"
+        )
+    if (
+        payload["schema"] != PROCEDURE_CONFIG_SCHEMA
+        or type(payload["version"]) is not int
+        or payload["version"] != PROCEDURE_CONFIG_VERSION
+        or payload["model"] != spec.stable_id
+    ):
+        raise ValueError(
+            f"procedure configuration identity is invalid for {model_name}"
+        )
+    architecture = payload["architecture"]
+    training = payload["training"]
+    if not isinstance(architecture, dict) or not isinstance(training, dict):
+        raise ValueError(
+            "procedure architecture and training settings must be JSON objects"
+        )
+    expected_architecture = set(spec.architecture_fields)
+    expected_training = set(spec.training_fields)
+    if set(architecture) != expected_architecture:
+        raise ValueError(
+            f"{model_name} architecture fields differ from the frozen schema"
+        )
+    if set(training) != expected_training:
+        raise ValueError(
+            f"{model_name} training fields differ from the frozen schema"
+        )
+    if expected_architecture.intersection(expected_training):
+        raise RuntimeError(
+            f"{model_name} frozen architecture/training schemas overlap"
+        )
+
+    runtime_fields = {"seed", "device"}
+    dataclass_names = {
+        field.name for field in dataclass_fields(spec.config_class)
+    }
+    expected_dataclass_names = (
+        expected_architecture | expected_training | runtime_fields
+    )
+    if dataclass_names != expected_dataclass_names:
+        raise RuntimeError(
+            f"{model_name} configuration dataclass drifted from its frozen "
+            "config-only schema"
+        )
+
+    values = {**architecture, **training}
+    for key, value in values.items():
+        _validate_setting_value(value, path=f"config.{key}")
+    return json.loads(_canonical_json(values))
 
 
 def _array_sha256(values: NDArray[Any]) -> str:
@@ -266,6 +595,24 @@ def _source_manifest() -> dict[str, str]:
     return result
 
 
+def _validate_config_source_binding(
+    config_identity: Mapping[str, Any],
+    source_manifest: Mapping[str, str],
+) -> None:
+    """Require the loaded config file to be the same file in source identity."""
+
+    config_file = config_identity.get("config_file")
+    config_sha256 = config_identity.get("config_file_sha256")
+    if (
+        not isinstance(config_file, str)
+        or not isinstance(config_sha256, str)
+        or source_manifest.get(config_file) != config_sha256
+    ):
+        raise RuntimeError(
+            "frozen configuration hash differs from the source manifest"
+        )
+
+
 def _git_state() -> dict[str, Any]:
     def run(*arguments: str) -> str:
         completed = subprocess.run(
@@ -315,22 +662,38 @@ def _environment() -> dict[str, Any]:
 def _load_frozen_config(
     model_name: str, *, seed: int, device: str
 ) -> tuple[Any, dict[str, Any]]:
-    relative, expected_sha256, config_class = _FROZEN_CONFIGS[model_name]
-    path = PROJECT_ROOT / relative
-    observed_sha256 = _sha256_file(path)
-    if observed_sha256 != expected_sha256:
-        raise RuntimeError(
-            f"frozen config artifact changed for {model_name}: "
-            f"expected {expected_sha256}, observed {observed_sha256}"
-        )
+    if model_name not in _PROCEDURE_CONFIGS:
+        raise ValueError(f"unknown local procedure configuration: {model_name}")
+    spec = _PROCEDURE_CONFIGS[model_name]
+    path = PROJECT_ROOT / spec.relative_path
     payload = _strict_json_load(path)
-    values = dict(payload["config"])
-    frozen_values = json.loads(json.dumps(values, sort_keys=True, allow_nan=False))
-    values.update(seed=int(seed), device=str(device))
-    config = config_class(**values)
+    frozen_values = _validated_config_payload(model_name, spec, payload)
+    observed_size = path.stat().st_size
+    observed_sha256 = _sha256_file(path)
+    if observed_size != spec.size_bytes or observed_sha256 != spec.sha256:
+        raise RuntimeError(
+            f"frozen procedure configuration changed for {model_name}: "
+            f"expected {spec.size_bytes} bytes/{spec.sha256}, observed "
+            f"{observed_size} bytes/{observed_sha256}"
+        )
+    runtime_values = {
+        **frozen_values,
+        "seed": int(seed),
+        "device": str(device),
+    }
+    config = spec.config_class(**runtime_values)
+    if _json_safe(asdict(config)) != _json_safe(runtime_values):
+        raise RuntimeError(
+            f"{model_name} runtime configuration does not round-trip exactly"
+        )
     return config, {
-        "artifact": relative,
-        "artifact_sha256": observed_sha256,
+        "schema": payload["schema"],
+        "version": payload["version"],
+        "model": payload["model"],
+        "config_file": spec.relative_path,
+        "config_file_bytes": observed_size,
+        "config_file_sha256": observed_sha256,
+        "settings_sha256": _json_sha256(frozen_values),
         "config": frozen_values,
         "runtime_overrides": {"seed": int(seed), "device": str(device)},
     }
@@ -769,7 +1132,13 @@ def run_one(
     config, runtime_config_identity = _load_frozen_config(
         model_name, seed=seed, device=device
     )
-    if runtime_config_identity["artifact_sha256"] != config_identity["artifact_sha256"]:
+    if (
+        set(config_identity) != _CONFIG_IDENTITY_KEYS
+        or any(
+            runtime_config_identity[key] != config_identity[key]
+            for key in _IMMUTABLE_CONFIG_IDENTITY_KEYS
+        )
+    ):
         raise RuntimeError("frozen configuration identity changed during the run")
 
     selection, selection_detail = _selection_fit(
@@ -1062,6 +1431,7 @@ def run_benchmark(
     )
     del _base_config
     source_manifest = _source_manifest()
+    _validate_config_source_binding(config_identity, source_manifest)
     environment = _environment()
     contract = _contract(
         model_name=model_name,
@@ -1176,6 +1546,8 @@ __all__ = [
     "FORMAL_SEEDS",
     "FORMAL_SUBJECTS",
     "MODEL_NAMES",
+    "PROCEDURE_CONFIG_SCHEMA",
+    "PROCEDURE_CONFIG_VERSION",
     "SCHEMA_VERSION",
     "covariance_view_contract",
     "derive_covariance_view",

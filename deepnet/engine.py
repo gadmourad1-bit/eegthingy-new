@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import random
 import time
 from dataclasses import asdict, dataclass
@@ -107,7 +108,9 @@ class CovarianceDataset(Dataset[tuple[Tensor, Tensor, Tensor, Tensor]]):
         cov = torch.as_tensor(covariances, dtype=torch.float32)
         target = torch.as_tensor(labels, dtype=torch.long)
         if cov.ndim != 4 or cov.shape[-1] != cov.shape[-2]:
-            raise ValueError("covariances must have shape (N, bands, channels, channels)")
+            raise ValueError(
+                "covariances must have shape (N, bands, channels, channels)"
+            )
         if len(cov) != len(target):
             raise ValueError("covariances and labels have different lengths")
         if log_references is None:
@@ -123,7 +126,9 @@ class CovarianceDataset(Dataset[tuple[Tensor, Tensor, Tensor, Tensor]]):
         else:
             intent = torch.as_tensor(intent_targets, dtype=torch.float32)
             if len(intent) != len(cov):
-                raise ValueError("intent targets and covariances have different lengths")
+                raise ValueError(
+                    "intent targets and covariances have different lengths"
+                )
         self.covariances = cov
         self.labels = target
         self.references = refs
@@ -172,10 +177,14 @@ def resolve_device(preference: str = "auto") -> torch.device:
 
     device = torch.device(preference)
     if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError(f"CUDA device {preference!r} was requested but CUDA is unavailable")
+        raise RuntimeError(
+            f"CUDA device {preference!r} was requested but CUDA is unavailable"
+        )
     if device.type == "mps":
         if not torch.backends.mps.is_available():
-            raise RuntimeError(f"MPS device {preference!r} was requested but MPS is unavailable")
+            raise RuntimeError(
+                f"MPS device {preference!r} was requested but MPS is unavailable"
+            )
         if not _mps_supports_spectral_ops():
             raise RuntimeError(
                 "MPS is available but lacks the torch.linalg.eigh kernel required by "
@@ -191,11 +200,23 @@ def set_reproducible_seed(seed: int, *, deterministic: bool = True) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    # Determinism is preferred for this small research model; warn-only avoids
-    # failing on a platform without a deterministic implementation.  The fast
-    # profile trades bit-exactness for faster kernels and TF32 matmuls.
-    torch.use_deterministic_algorithms(deterministic, warn_only=True)
-    if not deterministic:
+    if deterministic:
+        if (
+            torch.cuda.is_available()
+            and os.environ.get("CUBLAS_WORKSPACE_CONFIG") != ":4096:8"
+        ):
+            raise RuntimeError(
+                "deterministic CUDA requires CUBLAS_WORKSPACE_CONFIG=:4096:8 "
+                "before Python starts"
+            )
+        torch.use_deterministic_algorithms(True, warn_only=False)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.set_float32_matmul_precision("highest")
+    else:
+        torch.use_deterministic_algorithms(False, warn_only=False)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
@@ -274,7 +295,9 @@ def _evaluate_loss(
     mean_loss = total_loss / max(1, total_examples)
     if task_truth:
         balanced = float(
-            balanced_accuracy_score(np.concatenate(task_truth), np.concatenate(task_pred))
+            balanced_accuracy_score(
+                np.concatenate(task_truth), np.concatenate(task_pred)
+            )
         )
     else:
         balanced = float("nan")
@@ -286,7 +309,9 @@ def _build_optimizer(model: GeoAdaptNet, config: TrainConfig) -> torch.optim.Opt
 
     if not config.exclude_gate_from_weight_decay:
         return torch.optim.AdamW(
-            model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
+            model.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
         )
     decayed: list[Tensor] = []
     undecayed: list[Tensor] = []
@@ -348,9 +373,13 @@ def train_model(
         num_workers=config.num_workers,
     )
     optimizer = _build_optimizer(model, config)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.epochs
+    )
     augment = _augmentation_enabled(config)
-    swap_index = torch.as_tensor(left_right_swap_index(CHANNELS), dtype=torch.long, device=device)
+    swap_index = torch.as_tensor(
+        left_right_swap_index(CHANNELS), dtype=torch.long, device=device
+    )
     augment_generator = torch.Generator(device=device).manual_seed(config.seed + 1)
 
     best_state: dict[str, Tensor] | None = None
@@ -404,7 +433,9 @@ def train_model(
         validation_loss, validation_balanced = _evaluate_loss(
             model, validation_loader, device, config
         )
-        score = _selection_score(validation_loss, validation_balanced, config.select_metric)
+        score = _selection_score(
+            validation_loss, validation_balanced, config.select_metric
+        )
         history.append(
             {
                 "epoch": float(epoch),

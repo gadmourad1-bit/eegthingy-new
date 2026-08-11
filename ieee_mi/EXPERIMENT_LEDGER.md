@@ -14,8 +14,8 @@ Opened development cohorts:
 - `bnci2014_004`: S1--S9.
 - `cho2017`: S1--S15 in the current screens; S1--S52 are registered for
   development because they appeared in prior project experiments.
-- `physionet_mi`: S1--S54 are registered for development but have not yet been
-  opened by this study.
+- `physionet_mi`: S1--S54 have been opened and cached for development-only
+  screens and transfer experiments. They are not confirmation evidence.
 
 Sealed until an architecture, training recipe, comparator family, seeds,
 statistics, and source manifest are frozen:
@@ -469,3 +469,51 @@ The authoritative interpretation is in
 `results/NATIVE_FBMS_FULL_GRID_SUMMARY.md`. This remains opened development
 evidence. It does not establish SOTA, independent confirmation, source-seed
 stability, or clinical effectiveness in disabled or paralyzed users.
+
+## CHSD post-v3 disjoint-subject robustness amendment
+
+On 2026-07-29, the fixed `chsdnet_conditioned_005` configuration entered the
+transparent post-v3 exploratory amendment documented in
+`docs/ROBUSTNESS_SCREEN.md`. This amendment did not rewrite the earlier
+conditioned-v3 decision `kill_conditioned_family`. It used only opened
+development participants that were absent from the v2/v3 screens: 5 local,
+6 BNCI2014-001, 6 BNCI2014-004, 48 Cho2017, and 50 PhysioNet participants.
+The fixed four-model, fold-0, seed-7 Cartesian grid therefore contained 460
+records.
+
+All four workers completed exactly 115 records, emitted one normal completion
+summary, logged zero errors, and exited. The frozen status validator reported
+460 complete, zero missing, and zero corrupt records. The immutable plan
+SHA-256 was
+`1e4009ae67e7b11ae60c76c5d110ec49a27246422d2617c9c818199ca799b9ae`;
+the frozen runner and analyzer SHA-256 values were
+`93bc0c7828b78688620316f1612708a1a8fdb2f369612ea5da573931cc47b4d4`
+and
+`8cf2e388401679bac662bc5a470807edb99b9a805b93f8c6f29145f4ff02f0fa`.
+
+Only after exact completion was validated did the analyzer open the aggregate
+records. Equal-dataset balanced accuracy was:
+
+| Rank | Model | Balanced accuracy |
+|---:|---|---:|
+| 1 | CardinalFBC micro extended | 74.087% |
+| 2 | FBCNet | 73.628% |
+| 3 | CHSD-conditioned 0.05 | 73.543% |
+| 4 | TCFormer | 72.862% |
+
+The frozen decision was **`stop_chsd_promotion`**. The candidate was within
+0.544 percentage point of the strongest reference and exceeded TCFormer by
+0.680 point, but it did not satisfy every paired robustness clause:
+
+- versus CardinalFBC micro extended, it was nonnegative on only 1/5 datasets
+  and had a 13.91% strict paired-subject win rate;
+- versus FBCNet, it was nonnegative on 3/5 datasets but had only a 38.26%
+  strict paired-subject win rate; and
+- versus TCFormer, it passed the individual comparison with 4/5 nonnegative
+  datasets and a 47.83% strict paired-subject win rate.
+
+The aggregate analysis artifact SHA-256 is
+`ba834b159dae53781e44f19682a6c032d4674f46fb5b0f5c752fedd9dc84e943`.
+This is a retained negative development result. CHSD-conditioned must not be
+inserted into the formal common grid, described as selected, or used for a
+state-of-the-art, confirmation, or clinical claim.

@@ -1,0 +1,11 @@
+track_id,protocol_label,status,completed_units,planned_units,datasets,primary_model_or_condition,primary_metric,primary_value,comparison_boundary,artifact
+common_grid_v6,common raw-trial recipe 43-model grid,complete_exact_audit_pass,96320,96320,local_exp4;bnci2014_001;bnci2014_004;cho2017;physionet_mi,cardinal_fbc_compactdyn_scale025_extended,equal_dataset_macro_balanced_accuracy,0.7398999919431077,only exact five-dataset architecture leaderboard,common_grid_v6/analysis/model_ranking.csv
+gauge_gate1,GaugeQuotient opened-development Gate 1,complete_gate_failed,17,17,local_exp4;bnci2014_001;bnci2014_004;cho2017;physionet_mi,gauge_quotient_crossmoment_v1,equal_dataset_balanced_accuracy,0.7507043650793651,separate 17-subject one-seed gate; not comparable to common-grid ranking,gauge_gate1/analysis.json
+cardinal_fbms_transfer,CardinalFBMS native-montage transfer,complete_post_outcome_verification_pass,8675,8675,cho2017;physionet_mi,pretrained_cardinal_fbms,equal_dataset_condition_mean_balanced_accuracy,0.6607857567006118,separate target-transfer protocol; post-outcome verification is not the frozen gate,cardinal_fbms_transfer/independent_verification_lab.json
+author_recipe,author-recipe adapted TCFormer and FBCNet,pending_unrun,0,4480,protocol-defined,,balanced_accuracy,,separate author-recipe reference table,
+geoadapt_v2,GeoAdapt harmonized-v2 procedures,pending_unrun,0,6495,eligible datasets by model,,balanced_accuracy,,separate procedure table,
+local_procedures,CAMEO HemiParity PARITY-Fuse and ORBIT-v3 procedures,pending_unrun,0,8780,binary-task datasets,,balanced_accuracy,,separate binary-task procedure table,
+deterministic_controls,deterministic classical controls,pending_unrun,0,1344,protocol-defined,,balanced_accuracy,,separate seedless control table,
+hemiq_v2,HemiQ-Field harmonized-v2 adaptation,pending_unrun,0,45,bnci2014_004,,balanced_accuracy,,single-dataset procedure table,
+cardinal_fbc_transfer,CardinalFBC native-transfer family,incomplete_not_imported,364,6940,cho2017;physionet_mi,,balanced_accuracy,,separate target-transfer protocol after remaining records,
+gauge_gate2,GaugeQuotient disjoint Gate 2,not_run_by_prespecified_rule,0,,disjoint cohorts,,balanced_accuracy,,Gate 1 failure required candidate termination,

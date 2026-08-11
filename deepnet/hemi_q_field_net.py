@@ -540,16 +540,17 @@ class HemiQFieldNet(nn.Module):
         even_hemisphere = (raw[:, 0] + raw[:, 2]) * scale
         centre = raw[:, 1]
         odd_hemisphere = (raw[:, 0] - raw[:, 2]) * scale
-        # Filtering the physical C3/C4 signals in the same shared call makes
-        # their exchange literal (not a numerically reconstructed identity).
-        # This is what gives the added asymmetry moments bit-exact parity.
+        # Filter only the canonical parity basis.  Filtering physical C3/C4
+        # in separate flattened-batch slots is mathematically equivalent, but
+        # some convolution backends accumulate those slots differently by one
+        # or two ulps.  Reconstructing the hemispheric coefficients from the
+        # shared even/odd outputs makes their exchange bit-exact under odd-sign
+        # reversal while preserving the same linear Gabor representation.
         parity_signals = torch.stack(
             (
                 even_hemisphere,
                 centre,
                 odd_hemisphere,
-                raw[:, 0],
-                raw[:, 2],
             ),
             dim=1,
         )
@@ -557,8 +558,14 @@ class HemiQFieldNet(nn.Module):
         even_h = (coefficients[:, 0, :, 0], coefficients[:, 0, :, 1])
         centre_z = (coefficients[:, 1, :, 0], coefficients[:, 1, :, 1])
         odd_h = (coefficients[:, 2, :, 0], coefficients[:, 2, :, 1])
-        c3 = (coefficients[:, 3, :, 0], coefficients[:, 3, :, 1])
-        c4 = (coefficients[:, 4, :, 0], coefficients[:, 4, :, 1])
+        c3 = (
+            (even_h[0] + odd_h[0]) * scale,
+            (even_h[1] + odd_h[1]) * scale,
+        )
+        c4 = (
+            (even_h[0] - odd_h[0]) * scale,
+            (even_h[1] - odd_h[1]) * scale,
+        )
 
         batch, _, filters, _, filtered_times = coefficients.shape
         local_times = self.local_token_count

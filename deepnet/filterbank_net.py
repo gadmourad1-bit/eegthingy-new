@@ -1,20 +1,15 @@
-"""GeoAdaptNet-FB: a learnable-filterbank Riemannian tangent network.
+"""GeoAdaptNet-FB: a learnable-filterbank SPD matrix-log network.
 
-The fixed-band GeoAdaptNet (and, as measured, even classical Riemann-TS+LR) cannot
-beat ShallowConvNet once a subject has enough data, because its 4 filter bands are
-fixed while ShallowConvNet *learns* subject-specific temporal filters.  This variant
-prepends a small, differentiable **Sinc bandpass filterbank** (SincNet, Ravanelli &
-Bengio 2018 -- 2 parameters per band) to the *existing* SPD/tangent pipeline: learn K
-bandpass filters, form one full 15x15 spatial covariance per band, then run the same
-log-Euclidean recenter -> matrix-log -> tangent -> linear anchor.
+The module prepends a differentiable Sinc band-pass filterbank to a per-band
+spatial-covariance representation.  The full-covariance path applies a matrix
+logarithm at the identity reference; the reduced path applies a learned BiMap,
+eigenvalue flooring, and the same identity-reference matrix logarithm.  Both
+paths end in upper-triangle vectorization and a linear anchor.
 
-It stays a geometric net, NOT a re-skinned ShallowConvNet: it keeps the full channel
-covariance (all pairs, no learned spatial reduction), the matrix logarithm (couples
-channels, not an elementwise square/log), and the SPD recenter-to-reference that
-ShallowConvNet has no analogue for.  It sits in the TSMNet / Tensor-CSPNet family of
-learnable-filter Riemannian nets and must be reported as a *distinct* architecture,
-not under the fixed-band GeoAdaptNet's identity.  The bank is warm-started at the
-proven fixed bands so it starts at that baseline and can only refine.
+This is a distinct architecture from the fixed-band GeoAdaptNet.  The ordered
+cutoff parameterization is warm-started at the frozen bands, while subsequent
+optimization is free to move them subject to the declared ordering, bandwidth,
+and Nyquist constraints.
 """
 
 from __future__ import annotations
@@ -26,7 +21,6 @@ from typing import Sequence
 
 import numpy as np
 import torch
-from sklearn.metrics import balanced_accuracy_score
 from torch import Tensor, nn
 
 from .config import BANDS, SFREQ
@@ -36,9 +30,8 @@ from .spd import BiMap, LogEig, ReEig, matrix_log, symmetrize, upper_vectorize
 class SincFilterBank(nn.Module):
     """K learnable band-pass filters (SincNet parameterisation) applied per channel.
 
-    Each band has two learnable parameters -- a low cut-off and a (positive)
-    bandwidth -- so the strong band-pass inductive bias resists overfitting on
-    small motor-imagery sets.  Filters are shared across EEG channels.
+    Each band has two learnable ordered-cutoff logits. Filters are shared
+    across EEG channels.
     """
 
     def __init__(
@@ -51,6 +44,16 @@ class SincFilterBank(nn.Module):
         min_bw: float = 2.0,
     ) -> None:
         super().__init__()
+        if isinstance(n_bands, bool) or int(n_bands) <= 0:
+            raise ValueError("n_bands must be a positive integer")
+        if not math.isfinite(float(sfreq)) or float(sfreq) <= 0.0:
+            raise ValueError("sfreq must be finite and positive")
+        if isinstance(kernel_size, bool) or int(kernel_size) < 3:
+            raise ValueError("kernel_size must be an integer of at least 3")
+        if not math.isfinite(float(min_hz)) or float(min_hz) <= 0.0:
+            raise ValueError("min_hz must be finite and positive")
+        if not math.isfinite(float(min_bw)) or float(min_bw) <= 0.0:
+            raise ValueError("min_bw must be finite and positive")
         if kernel_size % 2 == 0:
             kernel_size += 1  # odd length keeps the filter zero-phase / centered
         self.n_bands = int(n_bands)
@@ -58,15 +61,66 @@ class SincFilterBank(nn.Module):
         self.kernel_size = int(kernel_size)
         self.min_hz = float(min_hz)
         self.min_bw = float(min_bw)
+        self.ordering_margin_hz = 1e-3
 
         if init_bands is None:
             nyquist = sfreq / 2.0
             edges = np.linspace(4.0, min(40.0, nyquist - 1.0), n_bands + 1)
             init_bands = [(edges[i], edges[i + 1]) for i in range(n_bands)]
-        lows = np.array([lo for lo, _ in init_bands], dtype=np.float32)
-        highs = np.array([hi for _, hi in init_bands], dtype=np.float32)
-        self.low_hz_ = nn.Parameter(torch.from_numpy(lows))
-        self.band_hz_ = nn.Parameter(torch.from_numpy(np.maximum(highs - lows, min_bw)))
+        if len(init_bands) != self.n_bands:
+            raise ValueError("init_bands length must equal n_bands")
+        bands = np.asarray(init_bands, dtype=np.float64)
+        nyquist = self.sfreq / 2.0
+        if (
+            bands.shape != (self.n_bands, 2)
+            or not np.all(np.isfinite(bands))
+            or np.any(bands[:, 0] <= self.min_hz)
+            or np.any(bands[:, 1] - bands[:, 0] <= self.min_bw)
+            or np.any(bands[:, 1] >= nyquist)
+            or np.any(np.diff(bands[:, 0]) <= 0.0)
+            or np.any(np.diff(bands[:, 1]) <= 0.0)
+        ):
+            raise ValueError(
+                "init_bands must be finite, strictly ordered (low, high) pairs "
+                "within Nyquist and satisfy min_hz/min_bw"
+            )
+        # Each unconstrained logit chooses a point inside a sequential feasible
+        # interval. The interval itself starts above the preceding cutoff, so
+        # ordering cannot be lost after an optimizer update (unlike independent
+        # abs/clamp transforms). Float64 logits preserve the literal warm start;
+        # generated filters are cast to the epoch dtype in forward().
+        margin = self.ordering_margin_hz
+        raw_lows: list[float] = []
+        previous_low: float | None = None
+        for index, target in enumerate(bands[:, 0]):
+            remaining = self.n_bands - index - 1
+            lower = self.min_hz if previous_low is None else previous_low + margin
+            upper = nyquist - self.min_bw - 2.0 * margin - 2.0 * margin * remaining
+            if not lower < float(target) < upper:
+                raise ValueError(
+                    "init_bands leave no strictly ordered low-cutoff margin"
+                )
+            fraction = (float(target) - lower) / (upper - lower)
+            raw_lows.append(math.log(fraction / (1.0 - fraction)))
+            previous_low = float(target)
+
+        raw_highs: list[float] = []
+        previous_high: float | None = None
+        for index, (target_low, target_high) in enumerate(bands):
+            remaining = self.n_bands - index - 1
+            lower = float(target_low) + self.min_bw + margin
+            if previous_high is not None:
+                lower = max(lower, previous_high + margin)
+            upper = nyquist - 2.0 * margin * remaining
+            if not lower < float(target_high) < upper:
+                raise ValueError(
+                    "init_bands leave no strictly ordered high-cutoff margin"
+                )
+            fraction = (float(target_high) - lower) / (upper - lower)
+            raw_highs.append(math.log(fraction / (1.0 - fraction)))
+            previous_high = float(target_high)
+        self.low_hz_ = nn.Parameter(torch.tensor(raw_lows, dtype=torch.float64))
+        self.band_hz_ = nn.Parameter(torch.tensor(raw_highs, dtype=torch.float64))
 
         half = (self.kernel_size - 1) // 2
         n = torch.arange(-half, half + 1, dtype=torch.float32) / sfreq
@@ -77,8 +131,7 @@ class SincFilterBank(nn.Module):
         self.register_buffer("window_", window.view(1, -1))
 
     def _band_pass(self) -> Tensor:
-        low = self.min_hz + torch.abs(self.low_hz_)
-        high = torch.clamp(low + self.min_bw + torch.abs(self.band_hz_), max=self.sfreq / 2.0)
+        low, high = self.effective_cutoffs()
         t = self.time_  # (1, K_t)
         # A band-pass filter is the difference of two low-pass sinc filters.
         low_pass_high = 2 * high.view(-1, 1) * _sinc(2 * high.view(-1, 1) * t * math.pi)
@@ -87,12 +140,59 @@ class SincFilterBank(nn.Module):
         band = band / (band.norm(dim=1, keepdim=True) + 1e-8)
         return band.unsqueeze(1)  # (n_bands, 1, kernel_size)
 
+    def effective_cutoffs(self) -> tuple[Tensor, Tensor]:
+        """Return strictly ordered, bounded effective cutoffs in hertz."""
+
+        nyquist = self.sfreq / 2.0
+        margin = self.ordering_margin_hz
+        lows: list[Tensor] = []
+        previous_low: Tensor | None = None
+        for index, raw in enumerate(self.low_hz_):
+            remaining = self.n_bands - index - 1
+            lower = (
+                raw.new_tensor(self.min_hz)
+                if previous_low is None
+                else previous_low + margin
+            )
+            upper = raw.new_tensor(
+                nyquist - self.min_bw - 2.0 * margin - 2.0 * margin * remaining
+            )
+            value = lower + torch.sigmoid(raw) * (upper - lower)
+            lows.append(value)
+            previous_low = value
+        low = torch.stack(lows)
+
+        highs: list[Tensor] = []
+        previous_high: Tensor | None = None
+        for index, (raw, band_low) in enumerate(zip(self.band_hz_, low, strict=True)):
+            remaining = self.n_bands - index - 1
+            lower = band_low + self.min_bw + margin
+            if previous_high is not None:
+                lower = torch.maximum(lower, previous_high + margin)
+            upper = raw.new_tensor(nyquist - 2.0 * margin * remaining)
+            value = lower + torch.sigmoid(raw) * (upper - lower)
+            highs.append(value)
+            previous_high = value
+        high = torch.stack(highs)
+        if (
+            not torch.all(torch.isfinite(low))
+            or not torch.all(torch.isfinite(high))
+            or torch.any(high - low <= self.min_bw)
+            or (self.n_bands > 1 and torch.any(torch.diff(low) <= 0.0))
+            or (self.n_bands > 1 and torch.any(torch.diff(high) <= 0.0))
+            or torch.any(high > nyquist)
+        ):
+            raise RuntimeError("learned Sinc cutoff ordering became invalid")
+        return low, high
+
     def forward(self, epochs: Tensor) -> Tensor:
         # epochs (N, C, T) -> (N, n_bands, C, T)
         n, channels, samples = epochs.shape
         filters = self._band_pass().to(epochs.dtype)
         flat = epochs.reshape(n * channels, 1, samples)
-        filtered = nn.functional.conv1d(flat, filters, padding=(self.kernel_size - 1) // 2)
+        filtered = nn.functional.conv1d(
+            flat, filters, padding=(self.kernel_size - 1) // 2
+        )
         filtered = filtered.reshape(n, channels, self.n_bands, samples)
         return filtered.permute(0, 2, 1, 3).contiguous()
 
@@ -108,23 +208,23 @@ def _sinc(x: Tensor) -> Tensor:
 def _band_covariances(signals: Tensor, shrinkage: float = 0.05) -> Tensor:
     """Differentiable per-band spatial covariances (N, K, C, C), SPD-regularized.
 
-    A learnable narrow band can drive a covariance near rank-1, which makes
-    ``eigh`` fail to converge on CUDA.  Each matrix is normalized to unit trace
-    and then shrunk toward the isotropic ``I/C``: the eigenvalues then lie in
-    ``[shrinkage/C, 1]``, hard-bounding the condition number so the SPD backbone
-    is always numerically stable regardless of where the filters move.
+    Each matrix is normalized to unit trace, shrunk by ``shrinkage`` toward
+    ``I/C``, and receives the declared deterministic diagonal ramp below.
+    These are representation choices, distinct from the fixed-view covariance
+    transform in :mod:`ieee_mi.geoadapt_v2`.
     """
 
     centered = signals - signals.mean(dim=-1, keepdim=True)
     samples = centered.shape[-1]
     cov = symmetrize(centered @ centered.transpose(-1, -2) / samples)
     channels = cov.shape[-1]
-    trace = torch.diagonal(cov, dim1=-2, dim2=-1).sum(dim=-1, keepdim=True).unsqueeze(-1)
+    trace = (
+        torch.diagonal(cov, dim1=-2, dim2=-1).sum(dim=-1, keepdim=True).unsqueeze(-1)
+    )
     cov = cov / trace.clamp_min(torch.finfo(cov.dtype).tiny)
     identity = torch.eye(channels, dtype=cov.dtype, device=cov.device) / channels
     cov = (1.0 - shrinkage) * cov + shrinkage * identity
-    # A tiny deterministic diagonal ramp separates otherwise-clustered eigenvalues
-    # of near-isotropic bands, which CUDA's eigh (syevd) cannot converge on.
+    # The deterministic ramp regularizes clustered eigenvalues before matrix log.
     ramp = torch.linspace(0.0, 0.02, channels, device=cov.device, dtype=cov.dtype)
     return cov + torch.diag(ramp)
 
@@ -192,11 +292,17 @@ class FilterBankSPDNet(nn.Module):
             tangent = torch.cat(bands, dim=1)
         else:
             # Full-covariance log-Euclidean tangent at the identity.
-            tangent = upper_vectorize(matrix_log(covariances, self.eps)).flatten(start_dim=1)
+            tangent = upper_vectorize(matrix_log(covariances, self.eps)).flatten(
+                start_dim=1
+            )
         if self.training and tangent.shape[0] == 1:
             tangent = nn.functional.batch_norm(
-                tangent, self.anchor_norm.running_mean, self.anchor_norm.running_var,
-                training=False, momentum=0.0, eps=self.anchor_norm.eps,
+                tangent,
+                self.anchor_norm.running_mean,
+                self.anchor_norm.running_var,
+                training=False,
+                momentum=0.0,
+                eps=self.anchor_norm.eps,
             )
         else:
             tangent = self.anchor_norm(tangent)
@@ -248,9 +354,17 @@ class FilterBankSPDClassifier:
         device = self._resolve_device()
         self.device_ = device
         channels = x_tr.shape[1]
-        init = list(BANDS) if (self.warm_start_bands and self.n_bands == len(BANDS)) else None
+        init = (
+            list(BANDS)
+            if (self.warm_start_bands and self.n_bands == len(BANDS))
+            else None
+        )
         model = FilterBankSPDNet(
-            channels, self.n_bands, self.sfreq, init_bands=init, reduced_dim=self.reduced_dim
+            channels,
+            self.n_bands,
+            self.sfreq,
+            init_bands=init,
+            reduced_dim=self.reduced_dim,
         ).to(device)
         self.param_count_ = model.parameter_count
 
@@ -273,8 +387,12 @@ class FilterBankSPDClassifier:
             else None
         )
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.n_epochs)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=self.lr, weight_decay=self.weight_decay
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.n_epochs
+        )
         loss_fn = nn.CrossEntropyLoss(label_smoothing=0.05)
         generator = torch.Generator(device=device).manual_seed(self.seed)
         best_loss, best_state, stale = float("inf"), None, 0
@@ -286,10 +404,15 @@ class FilterBankSPDClassifier:
                 idx = order[start : start + self.batch_size]
                 xb, yb = x_train[idx], y_train[idx]
                 if swap is not None:
-                    do = torch.rand(len(xb), device=device, generator=generator) < self.lr_swap_prob
+                    do = (
+                        torch.rand(len(xb), device=device, generator=generator)
+                        < self.lr_swap_prob
+                    )
                     if torch.any(do):
-                        xb = xb.clone(); xb[do] = xb[do][:, swap, :]
-                        yb = yb.clone(); yb[do] = 1 - yb[do]
+                        xb = xb.clone()
+                        xb[do] = xb[do][:, swap, :]
+                        yb = yb.clone()
+                        yb[do] = 1 - yb[do]
                 optimizer.zero_grad(set_to_none=True)
                 loss = loss_fn(model(xb), yb)
                 loss.backward()
@@ -320,7 +443,9 @@ class FilterBankSPDClassifier:
         out = []
         with torch.no_grad():
             for start in range(0, len(xt), 256):
-                out.append(torch.softmax(self.model_(xt[start : start + 256]), dim=1).cpu())
+                out.append(
+                    torch.softmax(self.model_(xt[start : start + 256]), dim=1).cpu()
+                )
         return torch.cat(out).numpy()
 
 

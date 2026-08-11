@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from ieee_mi.config import (
 )
 from ieee_mi.data import (
     PHYSIONET_MI_RUNS,
+    SUBJECT_CACHE_NPZ_MEMBERS,
     _atlas_unit_positions,
     _cache_path,
     _canonical_run_ids,
@@ -32,6 +35,7 @@ from ieee_mi.data import (
     _require_exact_epoch_length,
     _select_half_open_epoch_samples,
     _unit_positions,
+    _validate_npz_member_contract,
     apply_channel_scaler,
     build_development_caches,
     build_subject_cache,
@@ -137,6 +141,104 @@ def _write_synthetic_native_public_cache(
         ),
     )
     return output, channel_names
+
+
+def _rewrite_cache_identity(path: Path, identity: dict[str, object]) -> None:
+    with np.load(path, allow_pickle=False) as archive:
+        arrays = {
+            key: archive[key].copy()
+            for key in archive.files
+            if key != "identity"
+        }
+    np.savez_compressed(
+        path,
+        **arrays,
+        identity=np.asarray(
+            json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        ),
+    )
+
+
+def _rewrite_raw_zip_members(
+    path: Path,
+    transform,
+) -> None:
+    with zipfile.ZipFile(path, "r") as source:
+        entries = [
+            (info.filename, source.read(info))
+            for info in source.infolist()
+        ]
+    transformed = transform(entries)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as output:
+        for name, payload in transformed:
+            output.writestr(name, payload)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("duplicate", "traversal", "extra", "order"),
+)
+def test_cache_loader_rejects_nonexact_raw_zip_member_contract(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    output, _ = _write_synthetic_native_public_cache(tmp_path)
+
+    def mutate(entries: list[tuple[str, bytes]]) -> list[tuple[str, bytes]]:
+        if mutation == "duplicate":
+            return [*entries, entries[0]]
+        if mutation == "traversal":
+            return [("../x.npy", entries[0][1]), *entries[1:]]
+        if mutation == "extra":
+            return [*entries, ("extra.npy", entries[0][1])]
+        return list(reversed(entries))
+
+    _rewrite_raw_zip_members(output, mutate)
+    with pytest.raises(RuntimeError, match="raw ZIP members"):
+        load_subject_cache(
+            "bnci2014_001",
+            1,
+            cache_root=tmp_path,
+            montage_profile="native",
+        )
+
+
+def test_cache_loader_cross_checks_numpy_member_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output, _ = _write_synthetic_native_public_cache(tmp_path)
+    payload = output.read_bytes()
+    assert _validate_npz_member_contract(
+        payload,
+        expected_members=SUBJECT_CACHE_NPZ_MEMBERS,
+        source=str(output),
+    ) == SUBJECT_CACHE_NPZ_MEMBERS
+    real_load = np.load
+
+    class ReorderedArchive:
+        files = list(reversed(SUBJECT_CACHE_NPZ_MEMBERS))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *unused: object) -> None:
+            return None
+
+    def reordered_load(*args: object, **kwargs: object) -> ReorderedArchive:
+        return ReorderedArchive()
+
+    monkeypatch.setattr(data_module.np, "load", reordered_load)
+    try:
+        with pytest.raises(RuntimeError, match="NumPy members"):
+            load_subject_cache(
+                "bnci2014_001",
+                1,
+                cache_root=tmp_path,
+                montage_profile="native",
+            )
+    finally:
+        monkeypatch.setattr(data_module.np, "load", real_load)
 
 
 def test_development_and_confirmation_cohorts_are_disjoint_and_complete() -> None:
@@ -293,6 +395,105 @@ def test_native_loader_validates_dynamic_ordered_channels_and_atlas(
 
     _write_synthetic_native_public_cache(tmp_path, tamper_coordinates=True)
     with pytest.raises(RuntimeError, match="do not match standard_1005"):
+        load_subject_cache(
+            "bnci2014_001",
+            1,
+            cache_root=tmp_path,
+            montage_profile="native",
+        )
+
+
+def test_cache_loader_rejects_hardlinked_leaf(tmp_path: Path) -> None:
+    output, _ = _write_synthetic_native_public_cache(tmp_path)
+    external = tmp_path / "external-link.npz"
+    os.link(output, external)
+    with pytest.raises(RuntimeError, match="regular single-link"):
+        load_subject_cache(
+            "bnci2014_001",
+            1,
+            cache_root=tmp_path,
+            montage_profile="native",
+        )
+
+
+def test_cache_loader_rejects_symlinked_leaf_and_ancestor(tmp_path: Path) -> None:
+    leaf_root = tmp_path / "leaf-root"
+    output, _ = _write_synthetic_native_public_cache(leaf_root)
+    target = tmp_path / "real-cache.npz"
+    output.rename(target)
+    output.symlink_to(target)
+    with pytest.raises(RuntimeError, match="regular single-link"):
+        load_subject_cache(
+            "bnci2014_001",
+            1,
+            cache_root=leaf_root,
+            montage_profile="native",
+        )
+
+    real_root = tmp_path / "real-root"
+    _write_synthetic_native_public_cache(real_root)
+    alias_root = tmp_path / "alias-root"
+    alias_root.symlink_to(real_root, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="cache ancestor"):
+        load_subject_cache(
+            "bnci2014_001",
+            1,
+            cache_root=alias_root,
+            montage_profile="native",
+        )
+
+
+def test_cache_loader_rejects_fifo_without_blocking(tmp_path: Path) -> None:
+    output = _cache_path(tmp_path, "bnci2014_001", 1, "native")
+    output.parent.mkdir(parents=True)
+    os.mkfifo(output)
+    with pytest.raises(RuntimeError, match="regular single-link"):
+        load_subject_cache(
+            "bnci2014_001",
+            1,
+            cache_root=tmp_path,
+            montage_profile="native",
+        )
+
+
+def test_cache_reader_pins_ancestor_during_path_swap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    cache_path = cache_root / "subject.npz"
+    original = b"original immutable cache bytes"
+    replacement = b"replacement path bytes"
+    cache_path.write_bytes(original)
+    moved_root = tmp_path / "moved-cache"
+    real_read = os.read
+    swapped = False
+
+    def swap_ancestor_then_read(descriptor: int, size: int) -> bytes:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            cache_root.rename(moved_root)
+            cache_root.mkdir()
+            (cache_root / cache_path.name).write_bytes(replacement)
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(data_module.os, "read", swap_ancestor_then_read)
+    assert data_module._read_unique_regular_bytes(cache_path) == original
+    assert swapped
+    assert cache_path.read_bytes() == replacement
+
+
+def test_cache_loader_rejects_nested_undeclared_identity_fields(
+    tmp_path: Path,
+) -> None:
+    output, _ = _write_synthetic_native_public_cache(tmp_path)
+    with np.load(output, allow_pickle=False) as archive:
+        identity = json.loads(str(archive["identity"].item()))
+    identity["dataset"]["hidden_labels"] = [0, 1]
+    _rewrite_cache_identity(output, identity)
+    with pytest.raises(RuntimeError, match="identity does not match"):
         load_subject_cache(
             "bnci2014_001",
             1,
