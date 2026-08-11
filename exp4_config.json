@@ -1,5 +1,5 @@
 {
-    "id": 99,
+    "id": 18,
     "run": 4,
     "cues": 60,
     "time_prep": 10,
@@ -7,5 +7,5 @@
     "time_task": 2,
     "time_rest": 2,
     "time_buffer": 0.1,
-    "run_type": "Testing"
+    "run_type": "Training"
 }

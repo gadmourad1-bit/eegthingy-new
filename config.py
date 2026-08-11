@@ -24,8 +24,11 @@ SMOOTHER_N = 5
 SMOOTHER_M = 4
 SMOOTHER_DWELL = 3
 CONF_FLOOR = 0.85    # commit gate on the recentered confidence; also acts as the rest dead-zone
+RECENTER_ADAPTIVE = False    # True = track the neutral online; False = freeze the boundary at its
+                            # calibration seed (no online updates; drift-proof by construction)
 RECENTER_ALPHA = 0.008      # EMA rate for the adaptive decision boundary (applied on rest-like windows only)
-RECENTER_LEAK = 0.012       # mean-reversion pull back toward the seed each update; caps sustained drift
+RECENTER_LEAK_ENABLED = True  # toggle the mean-reversion anti-drift leak (False = pre-fix EMA behavior)
+RECENTER_LEAK = 0.003       # mean-reversion pull back toward the seed each update; caps sustained drift
 RECENTER_CLAMP = 1.0        # max drift of the neutral from its calibration seed, in log-odds (was 2.0)
 RECENTER_REST_CONF = 0.60   # windows below this recentered confidence are 'rest' and update the neutral
 TARGET_MAPPINGS = {
