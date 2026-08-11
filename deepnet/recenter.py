@@ -399,6 +399,7 @@ class BoundaryRecenter:
         self,
         *,
         alpha: float = 0.01,
+        leak: float = 0.0,
         clamp: float = 2.0,
         rest_confidence: float = 0.65,
         commit_threshold: float = 0.85,
@@ -414,6 +415,8 @@ class BoundaryRecenter:
     ) -> None:
         if not 0.0 <= alpha <= 1.0:
             raise ValueError("alpha must be in [0, 1]")
+        if not 0.0 <= leak <= 1.0:
+            raise ValueError("leak must be in [0, 1]")
         if clamp < 0.0:
             raise ValueError("clamp must be non-negative")
         if not 0.5 < rest_confidence < 1.0:
@@ -428,6 +431,7 @@ class BoundaryRecenter:
             raise ValueError("class labels must differ")
 
         self.alpha = float(alpha)
+        self.leak = float(leak)
         self.clamp = float(clamp)
         self.rest_confidence = float(rest_confidence)
         self.commit_threshold = float(commit_threshold)
@@ -520,6 +524,11 @@ class BoundaryRecenter:
             candidate = center_before + self.alpha * probability_weight * (
                 score - center_before
             )
+            # Mean-reversion toward the seed: a slight class bias in the near-neutral
+            # windows otherwise accumulates into sustained drift because the rest-like
+            # band follows the moving center.  The leak gives a restoring force, so the
+            # boundary tracks genuine drift but cannot lean over a long session.
+            candidate -= self.leak * (candidate - self.seed_center)
             low = self.seed_center - self.clamp
             high = self.seed_center + self.clamp
             self.center = float(np.clip(candidate, low, high))
@@ -556,6 +565,7 @@ class BoundaryRecenter:
             "version": STATE_VERSION,
             "config": {
                 "alpha": self.alpha,
+                "leak": self.leak,
                 "clamp": self.clamp,
                 "rest_confidence": self.rest_confidence,
                 "commit_threshold": self.commit_threshold,

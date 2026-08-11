@@ -86,9 +86,13 @@ class GeoAdaptDecoder:
                 adaptation_enabled=True,
             ),
             BoundaryRecenter(
-                alpha=0.01,
-                clamp=2.0,
-                rest_confidence=0.65,
+                # Anti-drift deployment settings: a mean-reversion leak plus a tighter
+                # clamp keep the boundary from leaning toward a class over a session,
+                # while still tracking genuine neutral-point drift.
+                alpha=0.008,
+                leak=0.012,
+                clamp=1.0,
+                rest_confidence=0.60,
                 commit_threshold=threshold,
                 temperature=self.temperature,
                 class1_label=0,
