@@ -14,8 +14,7 @@ from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
                     EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
                     STRIDE_S, CALIBRATION_SECONDS, TARGET_MAPPINGS, CONF_FLOOR,
-                    RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF, RECENTER_LEAK,
-                    RECENTER_LEAK_ENABLED, RECENTER_ADAPTIVE)
+                    RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF, RECENTER_LEAK)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -276,12 +275,10 @@ class BoundaryRecenter:
     """
 
     def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF,
-                 leak=RECENTER_LEAK, leak_enabled=RECENTER_LEAK_ENABLED,
-                 adaptive=RECENTER_ADAPTIVE):
-        self.adaptive = bool(adaptive)
+                 leak=RECENTER_LEAK):
         self.alpha = alpha
         self.clamp = clamp
-        self.leak = leak if leak_enabled else 0.0
+        self.leak = leak
         self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
         self.center = 0.0
         self.seed_center = 0.0
@@ -293,12 +290,12 @@ class BoundaryRecenter:
         return self
 
     def update(self, s):
-        """Return the recentered margin z = s - center. With RECENTER_ADAPTIVE off the
-        boundary stays frozen at its calibration seed (drift-proof); with it on, the
-        neutral is tracked from rest-like windows only, with a mean-reversion 'leak'
-        toward the seed so a slight class bias cannot accumulate into a sustained lean
-        over a session, and the clamp as the hard backstop."""
-        if self.adaptive and abs(s - self.center) < self.rest_margin:
+        """Track the neutral from rest-like windows only; return the recentered margin
+        z = s - center. A mean-reversion 'leak' pulls the center back toward the seed
+        each update so a slight class bias in the near-neutral windows cannot accumulate
+        into a sustained lean over a session (the drift the fixed EMA showed); the clamp
+        is the hard backstop."""
+        if abs(s - self.center) < self.rest_margin:
             self.center += self.alpha * (s - self.center) - self.leak * (self.center - self.seed_center)
             lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
             self.center = min(hi, max(lo, self.center))
