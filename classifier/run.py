@@ -14,7 +14,7 @@ from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
                     EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
                     STRIDE_S, CALIBRATION_SECONDS, TARGET_MAPPINGS, CONF_FLOOR,
-                    RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF, RECENTER_LEAK)
+                    RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -274,11 +274,9 @@ class BoundaryRecenter:
     dead-zone for free (idle sits near the boundary -> low confidence -> no commit).
     """
 
-    def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF,
-                 leak=RECENTER_LEAK):
+    def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
         self.alpha = alpha
         self.clamp = clamp
-        self.leak = leak
         self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
         self.center = 0.0
         self.seed_center = 0.0
@@ -290,13 +288,10 @@ class BoundaryRecenter:
         return self
 
     def update(self, s):
-        """Track the neutral from rest-like windows only; return the recentered margin
-        z = s - center. A mean-reversion 'leak' pulls the center back toward the seed
-        each update so a slight class bias in the near-neutral windows cannot accumulate
-        into a sustained lean over a session (the drift the fixed EMA showed); the clamp
-        is the hard backstop."""
+        """Track the neutral from rest-like windows only, clamped to seed +/- clamp;
+        return the recentered margin z = s - center."""
         if abs(s - self.center) < self.rest_margin:
-            self.center += self.alpha * (s - self.center) - self.leak * (self.center - self.seed_center)
+            self.center += self.alpha * (s - self.center)
             lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
             self.center = min(hi, max(lo, self.center))
         return s - self.center
