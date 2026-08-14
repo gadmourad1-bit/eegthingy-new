@@ -4,7 +4,7 @@ import tkinter as tk
 import queue
 
 from collections import deque
-from config import FB_BANDS, GUI_HISTORY_S, GUI_REFRESH_RATE, BOUNDARY_STEP
+from config import FB_BANDS, GUI_HISTORY_S, GUI_REFRESH_RATE
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection
@@ -21,11 +21,9 @@ SAMPLE_HIST_LEN = 10
 
 class GUI:
     def __init__(self, bci, smoother, class_labels, sfreq,
-                 band_sep=None, band_abs_max=None, recenter=None, base_center=0.0):
+                 band_sep=None, band_abs_max=None):
         self.bci = bci
         self.smoother = smoother
-        self.recenter = recenter
-        self.base_center = float(base_center)   # plot origin: boundary at calibration
         self.class_labels = list(class_labels)
         self.sfreq = float(sfreq)
         self.queue = queue.Queue()
@@ -64,11 +62,7 @@ class GUI:
 
         self.score_lim = max(6.0, self.gate * 2.5)
 
-        self.band_on = [True] * self.n_bands    # read by the inference thread
-        self.manual_total = 0.0                 # cumulative arrow nudges (display only)
-        self.latest_center = self.base_center
-
-        self.score_hist = deque(maxlen=TRAIL_LEN)   # (score, center) pairs
+        self.score_hist = deque(maxlen=TRAIL_LEN)
         self.latest_band_sig = None
         self.sample_hist = deque(maxlen=SAMPLE_HIST_LEN)
 
@@ -80,15 +74,15 @@ class GUI:
         self.canvas.mpl_connect("resize_event", self._on_resize)
         self.root.after(50, self._tick)
 
-    def push_decision(self, score, center, band_signal):
-        """Called from the inference thread with the live (band-masked) discriminant
-        score, the current boundary center, and the per-band signed contributions."""
-        self.viz_queue.put((float(score), float(center), np.asarray(band_signal, dtype=float)))
+    def push_decision(self, score, band_signal):
+        """Called from the inference thread with the live discriminant score and the
+        per-band signed contributions that sum (with bias) to it."""
+        self.viz_queue.put((float(score), np.asarray(band_signal, dtype=float)))
 
     def _build_window(self):
         self.root = tk.Tk()
         self.root.title("EEG Classifier Visualizer")
-        win_w, win_h = 780, 520
+        win_w, win_h = 760, 440
         self.root.update_idletasks()
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
@@ -113,67 +107,8 @@ class GUI:
         self._build_bands()
         self._build_samples()
 
-        controls = tk.Frame(self.root)
-        controls.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=4)
-        self._build_controls(controls)
-
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-    def _build_controls(self, bar):
-        bands = tk.LabelFrame(bar, text="bands (Hz)")
-        bands.pack(side=tk.LEFT, padx=(0, 10))
-        self._band_vars = []
-        for i, (l, h) in enumerate(FB_BANDS):
-            var = tk.BooleanVar(value=True)
-            tk.Checkbutton(bands, text=f"{int(l)}–{int(h)}", variable=var,
-                           command=lambda i=i, var=var: self._on_band_toggle(i, var)
-                           ).pack(side=tk.LEFT)
-            self._band_vars.append(var)
-
-        bound = tk.LabelFrame(bar, text="boundary")
-        bound.pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(bound, text="◀", width=2,
-                  command=lambda: self._nudge(-BOUNDARY_STEP)).pack(side=tk.LEFT)
-        self.offset_label = tk.Label(bound, text="+0.00", width=6)
-        self.offset_label.pack(side=tk.LEFT)
-        tk.Button(bound, text="▶", width=2,
-                  command=lambda: self._nudge(+BOUNDARY_STEP)).pack(side=tk.LEFT)
-        tk.Button(bound, text="reset", command=self._reset_nudge).pack(side=tk.LEFT, padx=(4, 2))
-
-        gate = tk.LabelFrame(bar, text="confidence gate")
-        gate.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.conf_scale = tk.Scale(gate, from_=0.55, to=0.99, resolution=0.01,
-                                   orient=tk.HORIZONTAL, command=self._on_conf)
-        self.conf_scale.set(round(self.conf_floor, 2))
-        self.conf_scale.pack(fill=tk.X, expand=True, padx=4)
-
-    def _on_band_toggle(self, i, var):
-        self.band_on[i] = bool(var.get())
-        self.ax_bands.get_yticklabels()[i].set_alpha(1.0 if self.band_on[i] else 0.35)
-        self.bg = None            # tick labels live in the blit background
-        self.canvas.draw_idle()
-
-    def _nudge(self, delta):
-        if self.recenter is not None:
-            self.recenter.nudge(delta)
-        self.manual_total += delta
-        self.latest_center += delta   # immediate feedback, before the next window lands
-        self.offset_label.config(text=f"{self.manual_total:+.2f}")
-        self._dirty = True
-
-    def _reset_nudge(self):
-        if self.manual_total:
-            self._nudge(-self.manual_total)
-        self.manual_total = 0.0
-        self.offset_label.config(text="+0.00")
-
-    def _on_conf(self, value):
-        cf = min(max(float(value), 1e-3), 1 - 1e-3)
-        self.conf_floor = cf
-        self.gate = math.log(cf / (1.0 - cf))
-        self.smoother.conf_floor = cf
-        self._dirty = True
 
     def _build_conf(self):
         self.ax_conf.set_title("confidence over time")
@@ -182,8 +117,6 @@ class GUI:
         self.ax_conf.set_ylim(0, 1)
         self.ax_conf.set_xlim(-GUI_HISTORY_S, 0)
         self.ax_conf.axhline(0.5, color="gray", lw=0.5, ls="--")
-        self.conf_gate_line = self.ax_conf.axhline(self.conf_floor, color=CONSENSUS_COLOR,
-                                                   lw=0.9, ls=":", animated=True)
 
         colors = [NEG_COLOR, POS_COLOR, "tab:green", "tab:orange"]
         self.conf_lines = {}
@@ -222,30 +155,22 @@ class GUI:
         neg_c = self.class_labels[0] if len(self.class_labels) > 0 else 0
         pos_c = self.class_labels[1] if len(self.class_labels) > 1 else 1
 
-        ax.set_title("confidence gate (log-odds vs calibration baseline)")
+        ax.set_title("confidence gate (log-odds)")
         ax.set_xlim(-sl, sl)
         ax.set_ylim(0, 1)
         ax.set_yticks([])
 
-        ax.axvline(0, color="#bbbbbb", lw=0.8, ls=":", zorder=1)
-        ax.text(0, 0.03, "baseline", ha="center", va="bottom", fontsize=7, color="#999999")
+        ax.axvspan(-sl, -self.gate, color=NEG_COLOR, alpha=0.07, zorder=0)
+        ax.axvspan(self.gate, sl, color=POS_COLOR, alpha=0.07, zorder=0)
+        ax.axvline(0, color="#444", lw=1.6, zorder=3)
+        for g in (-self.gate, self.gate):
+            ax.axvline(g, color="#666", lw=1.0, ls="--", zorder=3)
 
-        # boundary + gates move live (arrows, adaptive drift, conf slider) -> animated
-        self.span_neg = ax.axvspan(-sl, -self.gate, color=NEG_COLOR, alpha=0.07, zorder=0)
-        self.span_pos = ax.axvspan(self.gate, sl, color=POS_COLOR, alpha=0.07, zorder=0)
-        self.center_line = ax.axvline(0, color="#444", lw=1.6, zorder=3)
-        self.gate_lines = [ax.axvline(g, color="#666", lw=1.0, ls="--", zorder=3)
-                           for g in (-self.gate, self.gate)]
-        self.abstain_text = ax.text(0, 0.485, "abstain", ha="center", va="center",
-                                    fontsize=8, color=MID_COLOR)
-        for art in (self.span_neg, self.span_pos, self.center_line,
-                    *self.gate_lines, self.abstain_text):
-            art.set_animated(True)
-
-        ax.text(0.02, 0.485, f"← class {neg_c}", ha="left", va="center",
-                fontsize=9, color=NEG_COLOR, fontweight="bold", transform=ax.transAxes)
-        ax.text(0.98, 0.485, f"class {pos_c} →", ha="right", va="center",
-                fontsize=9, color=POS_COLOR, fontweight="bold", transform=ax.transAxes)
+        ax.text(-sl * 0.96, 0.485, f"← class {neg_c}", ha="left", va="center",
+                fontsize=9, color=NEG_COLOR, fontweight="bold")
+        ax.text(sl * 0.96, 0.485, f"class {pos_c} →", ha="right", va="center",
+                fontsize=9, color=POS_COLOR, fontweight="bold")
+        ax.text(0, 0.485, "abstain", ha="center", va="center", fontsize=8, color=MID_COLOR)
 
         self.live_scatter = ax.scatter([], [], animated=True, zorder=6, edgecolors="none")
 
@@ -324,11 +249,10 @@ class GUI:
 
         while True:
             try:
-                score, center, band_sig = self.viz_queue.get_nowait()
+                score, band_sig = self.viz_queue.get_nowait()
             except queue.Empty:
                 break
-            self.score_hist.append((score, center))
-            self.latest_center = center
+            self.score_hist.append(score)
             self.latest_band_sig = band_sig
             self._dirty = True
 
@@ -344,24 +268,13 @@ class GUI:
             self._refresh_axis()
             self._refresh_bands()
             self._refresh_samples()
-            if self.bg is None:         # a refresh invalidated the background (axis rescale)
-                self.canvas.draw_idle()
-                self.root.after(self.tick_ms, self._tick)
-                return
             self.canvas.restore_region(self.bg)
             for lc in self.onset_collections.values():
                 self.ax_conf.draw_artist(lc)
             for line in self.conf_lines.values():
                 self.ax_conf.draw_artist(line)
-            self.ax_conf.draw_artist(self.conf_gate_line)
             for bar in self.prob_bars:
                 self.ax_probs.draw_artist(bar)
-            self.ax_axis.draw_artist(self.span_neg)
-            self.ax_axis.draw_artist(self.span_pos)
-            self.ax_axis.draw_artist(self.center_line)
-            for gl in self.gate_lines:
-                self.ax_axis.draw_artist(gl)
-            self.ax_axis.draw_artist(self.abstain_text)
             self.ax_axis.draw_artist(self.live_scatter)
             for bar in self.band_bars:
                 self.ax_bands.draw_artist(bar)
@@ -400,7 +313,6 @@ class GUI:
         self.sample_hist.append({
             "pred": int(last["prediction"]),
             "conf": float(last["confidence"]),
-            "vote": last.get("vote"),   # the vote the smoother actually counted
             "consensus": bool(self.latest_consensus),
         })
 
@@ -439,37 +351,18 @@ class GUI:
             bar.set_height(self.latest_probs.get(c, 0.0))
 
     def _refresh_axis(self):
-        g = self.gate
-        raw_cx = self.latest_center - self.base_center
-        need = max(6.0, abs(raw_cx) + g + 1.0)
-        if need > self.score_lim:       # boundary + gate outgrew the axis: rescale (grow-only)
-            self.score_lim = need
-            self.ax_axis.set_xlim(-need, need)
-            self.bg = None
-        sl = self.score_lim
-        cx = float(np.clip(raw_cx, -sl * 0.95, sl * 0.95))
-        self.center_line.set_xdata([cx, cx])
-        self.gate_lines[0].set_xdata([cx - g, cx - g])
-        self.gate_lines[1].set_xdata([cx + g, cx + g])
-        self.abstain_text.set_position((cx, 0.485))
-        neg_edge, pos_edge = max(-sl, cx - g), min(sl, cx + g)
-        self.span_neg.set_bounds(-sl, 0, neg_edge + sl, 1)
-        self.span_pos.set_bounds(pos_edge, 0, sl - pos_edge, 1)
-        self.conf_gate_line.set_ydata([self.conf_floor, self.conf_floor])
-
         n = len(self.score_hist)
         if n == 0:
             self.live_scatter.set_offsets(np.empty((0, 2)))
             return
-        pairs = np.array(self.score_hist, dtype=float)     # columns: score, center
-        xs = np.clip(pairs[:, 0] - self.base_center, -sl * 0.985, sl * 0.985)
-        margins = pairs[:, 0] - pairs[:, 1]                # each dot's decision margin
+        scores = np.fromiter(self.score_hist, dtype=float)
+        xs = np.clip(scores, -self.score_lim * 0.985, self.score_lim * 0.985)
         frac = (n - 1 - np.arange(n)) / max(n - 1, 1)
         ys = 0.53 + frac * 0.44
         sizes = 150 * (1 - 0.78 * frac) + 12
         alphas = np.clip(1.0 - 0.82 * frac, 0.12, 1.0)
-        base = np.where(margins > g, POS_COLOR,
-                        np.where(margins < -g, NEG_COLOR, MID_COLOR))
+        base = np.where(scores > self.gate, POS_COLOR,
+                        np.where(scores < -self.gate, NEG_COLOR, MID_COLOR))
         rgba = np.array([to_rgba(base[i], alphas[i]) for i in range(n)])
         self.live_scatter.set_offsets(np.column_stack([xs, ys]))
         self.live_scatter.set_sizes(sizes)
@@ -479,16 +372,12 @@ class GUI:
         sig = self.latest_band_sig
         if sig is None:
             return
-        active = [i for i in range(min(len(sig), self.n_bands)) if self.band_on[i]]
-        dom = max(active, key=lambda i: abs(float(sig[i]))) if active else None
+        dom = int(np.argmax(np.abs(sig)))
         for i, bar in enumerate(self.band_bars):
             if i >= len(sig):
                 break
             w = float(sig[i])
             bar.set_width(w)
-            if not self.band_on[i]:
-                bar.set_color(to_rgba(MID_COLOR, 0.25))    # excluded from the score
-                continue
             col = POS_COLOR if w >= 0 else NEG_COLOR
             bar.set_color(to_rgba(col, 1.0 if i == dom else 0.32))
 
@@ -501,10 +390,9 @@ class GUI:
 
             entry = self.sample_hist[i]
             bar.set_alpha(1.0)
-            vote = entry.get("vote")
-            if vote is not None:
-                bar.set_facecolor(self.decision_colors.get(vote, MID_COLOR))
-                text.set_text(str(vote))
+            if entry["conf"] >= self.conf_floor:
+                bar.set_facecolor(self.decision_colors.get(entry["pred"], MID_COLOR))
+                text.set_text(str(entry["pred"]))
             else:
                 bar.set_facecolor(MID_COLOR)
                 text.set_text("")

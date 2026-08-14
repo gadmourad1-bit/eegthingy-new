@@ -1,10 +1,7 @@
 DATA_DIR = './data'
 STRIDE_S = 0.2
 FILTER_WARMUP_S = 2.0
-CALIBRATION_SECONDS = 45        # single-block flow (sbc/lean_online only)
-CALIBRATION_TASK_SECONDS = 30   # calibration phase 1: imagine the task(s) -> alignment reference
-CALIBRATION_REST_SECONDS = 30   # calibration phase 2: imagine nothing -> decision-boundary baseline
-BOUNDARY_STEP = 0.25            # log-odds moved per manual boundary-arrow click in the live GUI
+CALIBRATION_SECONDS = 45
 EEG_CHANNELS_MAPPING = [
     'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',  # Cyton ch 1-8  (ch8 unplugged)
     'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',    # Daisy  ch 9-16

@@ -6,7 +6,6 @@ import os
 import sys
 import threading
 import time
-from collections import deque
 from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -14,8 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
                     EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
-                    STRIDE_S, CALIBRATION_TASK_SECONDS, CALIBRATION_REST_SECONDS,
-                    TARGET_MAPPINGS, CONF_FLOOR,
+                    STRIDE_S, CALIBRATION_SECONDS, TARGET_MAPPINGS, CONF_FLOOR,
                     RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -269,18 +267,11 @@ class BoundaryRecenter:
 
     EA aligns covariance but not *where* a subject's log-odds sit, so cross-subject the
     LDA boundary is offset (left-skew; rest reads as a confident class) and drifts
-    within a session (the decoder sticks). Seed the neutral from the calibration rest
-    block (true idle baseline), then track it from rest-like windows ONLY (so sustained
-    real MI never pulls it), clamped near the seed so it can't run away. Decisions and
-    confidence are taken on the effective margin z = s - center - offset; gating that
-    at CONF_FLOOR gives a rest dead-zone for free (idle sits near the boundary -> low
-    confidence -> no commit).
-
-    Two distinct manual adjustments: nudge() is the operator's bias correction (GUI
-    arrows) — a persistent offset stacked on the tracked center, deliberately outside
-    the EMA so the tracker can neither decay it back nor be starved by it. shift()
-    moves the tracked center AND its clamp anchor, for genuine operating-point changes
-    (a band toggled off moves where the masked score sits at rest).
+    within a session (the decoder sticks). Seed the neutral from the calibration block,
+    then track it from rest-like windows ONLY (so sustained real MI never pulls it),
+    clamped near the seed so it can't run away. Decisions and confidence are taken on
+    the recentered margin z = s - center; gating that at CONF_FLOOR gives a rest
+    dead-zone for free (idle sits near the boundary -> low confidence -> no commit).
     """
 
     def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
@@ -289,40 +280,26 @@ class BoundaryRecenter:
         self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
         self.center = 0.0
         self.seed_center = 0.0
-        self.offset = 0.0
-        self._lock = threading.Lock()
 
     def seed(self, scores):
         scores = np.asarray(scores, dtype=float)
         if scores.size:
-            with self._lock:
-                self.center = self.seed_center = float(np.median(scores))
+            self.center = self.seed_center = float(np.median(scores))
         return self
 
-    def nudge(self, delta):
-        with self._lock:
-            self.offset += delta
-
-    def shift(self, delta):
-        with self._lock:
-            self.center += delta
-            self.seed_center += delta
-
     def update(self, s):
-        """Track the rest median from rest-like windows only (gated on the TRACKED
-        center, not the offset boundary), clamped to seed +/- clamp; return the
-        effective margin z = s - center - offset."""
-        with self._lock:
-            if abs(s - self.center) < self.rest_margin:
-                self.center += self.alpha * (s - self.center)
-                lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
-                self.center = min(hi, max(lo, self.center))
-            return s - self.center - self.offset
+        """Track the neutral from rest-like windows only, clamped to seed +/- clamp;
+        return the recentered margin z = s - center."""
+        if abs(s - self.center) < self.rest_margin:
+            self.center += self.alpha * (s - self.center)
+            lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
+            self.center = min(hi, max(lo, self.center))
+        return s - self.center
 
 
-def _stream_windows(bci, sfreq, train_idx, window_n, warmup_n, seconds, prompt):
-    """Stream `seconds` of EEG with a countdown, then slice it into the per-band
-    windows the decoder consumes. Returns None if too little data was captured."""
+def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
+    """Stream `seconds` of EEG while the subject imagines the task in the online
+    context, then slice it into per-band windows for set_reference()."""
     buffer_n = window_n + warmup_n
     collected, lock = [], threading.Lock()
 
@@ -335,7 +312,7 @@ def _stream_windows(bci, sfreq, train_idx, window_n, warmup_n, seconds, prompt):
 
     bci.callback = collect
     bci.start()
-    print(prompt)
+    print(f"\nCalibration: imagine the task(s) in the online context for {seconds}s…")
     for s in range(seconds, 0, -1):
         print(f"  {s:2d}", end="\r", flush=True)
         time.sleep(1)
@@ -353,18 +330,6 @@ def _stream_windows(bci, sfreq, train_idx, window_n, warmup_n, seconds, prompt):
         buf = full[:, end - buffer_n:end]
         windows.append(np.stack([bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS], axis=0))
     return np.array(windows)
-
-def record_calibration(bci, sfreq, train_idx, window_n, warmup_n):
-    """Two-phase calibration. Phase 1 (task imagery) captures the online-context
-    distribution for set_reference(); phase 2 (imagine nothing) captures true rest,
-    whose scores become the decision-boundary baseline."""
-    X_task = _stream_windows(
-        bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_TASK_SECONDS,
-        f"\nCalibration 1/2: imagine the task(s), alternating sides, for {CALIBRATION_TASK_SECONDS}s…")
-    X_rest = _stream_windows(
-        bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_REST_SECONDS,
-        f"\nCalibration 2/2: relax and imagine NOTHING for {CALIBRATION_REST_SECONDS}s…")
-    return X_task, X_rest
 
 def parse_indices(raw, n):
     out = []
@@ -526,14 +491,13 @@ def save_online_recording(eeg_chunks, sfreq, out_path):
     print(f"recording saved: {raw.n_times} samples ({raw.n_times / sfreq:.1f}s) -> {out_path}")
 
 def save_decision_log(rows, out_path):
-    """Per-window decoder trace (time, band-masked log-odds, adaptive center, recentered
-    margin, prediction, confidence, committed class, live conf floor, band mask) for
-    offline analysis of skew/drift."""
+    """Per-window decoder trace (time, raw log-odds, adaptive center, recentered margin,
+    prediction, confidence, committed class) for offline analysis of skew/drift."""
     if not rows:
         return
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
-        f.write("time,log_odds,center,margin,pred,conf,committed,conf_floor,bands\n")
+        f.write("time,log_odds,center,margin,pred,conf,committed\n")
         for r in rows:
             f.write(",".join(str(x) for x in r) + "\n")
     print(f"decision log saved: {len(rows)} rows -> {out_path}")
@@ -607,28 +571,17 @@ def run_online(headless=False):
           f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
           f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
-    # Alignment reference from the task block; boundary baseline from the rest block.
+    # EA alignment + decision-boundary recentering, both from the calibration block.
     recenter = BoundaryRecenter()
-    X_task, X_rest = record_calibration(bci, sfreq, train_idx, window_n, warmup_n)
-
-    if X_task is not None and len(X_task) >= 2:
-        clf.set_reference(X_task)
-        print(f"aligned on {len(X_task)} task windows")
+    X_cal = record_calibration(bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_SECONDS)
+    if X_cal is not None and len(X_cal) >= 2:
+        clf.set_reference(X_cal)
+        pcal = clf.predict_proba(X_cal)
+        scal = np.log(np.clip(pcal[:, 1], 1e-9, 1.0) / np.clip(pcal[:, 0], 1e-9, 1.0))
+        recenter.seed(scal)
+        print(f"aligned on {len(X_cal)} windows (boundary center={recenter.center:+.2f})")
     else:
-        print("task calibration produced too little data; using pooled training reference.")
-
-    def log_odds(X):
-        p = clf.predict_proba(X)
-        return np.log(np.clip(p[:, 1], 1e-9, 1.0) / np.clip(p[:, 0], 1e-9, 1.0))
-
-    if X_rest is not None and len(X_rest) >= 2:
-        recenter.seed(log_odds(X_rest))
-        print(f"rest baseline from {len(X_rest)} windows: boundary center={recenter.center:+.2f}")
-    elif X_task is not None and len(X_task) >= 2:
-        recenter.seed(log_odds(X_task))
-        print(f"no rest data; boundary seeded from task windows (center={recenter.center:+.2f})")
-    else:
-        print("no calibration data; boundary center=0.")
+        print("calibration produced too little data; using pooled training reference, center=0.")
 
     gui = None
     if not headless:
@@ -639,8 +592,7 @@ def run_online(headless=False):
         band_sep = np.abs(sig1.mean(0) - sig0.mean(0)) / (np.sqrt(0.5 * (sig0.var(0) + sig1.var(0))) + 1e-9)
         band_abs_max = float(np.percentile(np.abs(train_signal), 99)) or 1.0
         gui = GUI(bci, smoother, clf.classes_, sfreq,
-                  band_sep=band_sep, band_abs_max=band_abs_max,
-                  recenter=recenter, base_center=recenter.center)
+                  band_sep=band_sep, band_abs_max=band_abs_max)
 
     prev_print_t = None
 
@@ -649,11 +601,8 @@ def run_online(headless=False):
     rec_eeg, rec_rows = [], []
     rec_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    prev_mask = None
-    recent_sig = deque(maxlen=50)   # ~10 s of per-band votes, for toggle compensation
-
     def on_chunk(chunk):
-        nonlocal buffer, prev_print_t, prev_mask
+        nonlocal buffer, prev_print_t
         eeg_all = chunk[bci.eeg, :]
         if eeg_all.shape[1] == 0:
             return
@@ -677,35 +626,15 @@ def run_online(headless=False):
         bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
         window = np.stack(bands, axis=0)[np.newaxis, ...]
 
-        band_mask = None
         if headless:
             probs_raw = clf.predict_proba(window)[0]
-            s = float(np.log(max(probs_raw[1], 1e-9) / max(probs_raw[0], 1e-9)))
         else:
-            _, score, band_sig = clf.analyze(window)
-            sig = band_sig[0]
-            band_mask = list(gui.band_on)
-            # a toggle moves where the masked score sits at rest: shift the tracked
-            # center by the changed bands' recent mean vote so the boundary follows
-            if prev_mask is not None and band_mask != prev_mask and recent_sig:
-                hist = np.mean(recent_sig, axis=0)
-                delta = sum((float(hist[b]) if band_mask[b] else -float(hist[b]))
-                            for b in range(min(len(hist), len(band_mask), len(prev_mask)))
-                            if band_mask[b] != prev_mask[b])
-                if delta:
-                    recenter.shift(delta)
-                    print(f"band mask {''.join('1' if m else '0' for m in band_mask)} "
-                          f"-> boundary shifted {delta:+.2f}")
-            prev_mask = band_mask
-            recent_sig.append(sig.copy())
-            # excluded bands: subtract their centered vote from the linear score
-            s = float(score[0]) - sum(float(sig[b]) for b in range(len(sig))
-                                      if b < len(band_mask) and not band_mask[b])
+            proba, score, band_sig = clf.analyze(window)
+            probs_raw = proba[0]
+            gui.push_decision(float(score[0]), band_sig[0])
+        s = float(np.log(max(probs_raw[1], 1e-9) / max(probs_raw[0], 1e-9)))
         z = recenter.update(s)                            # recenter on the subject's neutral
-        center_used = s - z          # tracked center + manual offset, consistent with z
-        if not headless:
-            gui.push_decision(s, center_used, sig)
-        p1 = 1.0 / (1.0 + np.exp(-np.clip(z, -50.0, 50.0)))
+        p1 = 1.0 / (1.0 + np.exp(-z))
         probs = np.array([1.0 - p1, p1])                  # recentered probabilities
         pred = clf.classes_[int(np.argmax(probs))]
         conf = float(np.max(probs))
@@ -722,13 +651,11 @@ def run_online(headless=False):
         dt_ms = (now - prev_print_t) * 1000 if prev_print_t is not None else 0.0
         prev_print_t = now
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  conf {conf*100:3.0f}% (ctr {center_used:+.1f})  [{breakdown}]  → {tag}{commit}")
+        print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  conf {conf*100:3.0f}% (ctr {recenter.center:+.1f})  [{breakdown}]  → {tag}{commit}")
 
         if record:
-            mask_str = "" if band_mask is None else "".join("1" if b else "0" for b in band_mask)
-            rec_rows.append((ts, f"{s:.4f}", f"{center_used:.4f}", f"{z:.4f}",
-                             int(pred), f"{conf:.4f}", int(final),
-                             f"{smoother.conf_floor:.2f}", mask_str))
+            rec_rows.append((ts, f"{s:.4f}", f"{recenter.center:.4f}", f"{z:.4f}",
+                             int(pred), f"{conf:.4f}", int(final)))
 
     bci.callback = on_chunk
     bci.start()
