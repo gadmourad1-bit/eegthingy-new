@@ -1,18 +1,8 @@
 # Vendored from staraink/MIRepNet (model/mlm.py), MIT licensed.
-# Trimmed: dropped the `wandb` import (only used by the original repo's own
-# training script, not by the model itself) and the pretraining-only decoder
-# heads we don't need for downstream fine-tuning/inference.
+# Trimmed: dropped the `wandb` import and pretraining-only decoder heads.
 #
-# Architecture (unchanged from upstream):
-#   PatchEmbedding: (B, C, T) -> 1D temporal conv -> spatial conv across all
-#     C channels -> BN/ELU/AvgPool -> linear projection to emb_size.
-#   TransformerEncoder: `depth` standard pre-norm transformer blocks over the
-#     resulting token sequence.
-#   clshead: linear classification head (downstream mode).
-#
-# Pretrained checkpoint (weight/MIRepNet.pth) has emb_size=256, depth=6,
-# num_channels=45 baked into its tensor shapes - keep these defaults unless
-# you are pretraining from scratch or using a custom channel count.
+# Added ChannelAdapter + AdaptedMIRepNet to map a custom montage (e.g. 15ch)
+# to the pretrained 45-channel topology via a learnable 1x1 Conv1d.
 
 import torch
 import torch.nn as nn
@@ -36,8 +26,7 @@ class PatchEmbedding(nn.Module):
             nn.Conv2d(128, embed_dim, (1, 1), stride=(1, 1)),
             Rearrange('b e (h) (w) -> b (h w) e'),
         )
-        # NOTE: chan_embed is kept only for checkpoint compatibility with the
-        # original 45-channel pretrained model. It is not used in forward().
+        # kept only for checkpoint compatibility; not used in forward
         self.chan_embed = nn.Embedding(45, embed_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -118,9 +107,7 @@ class TransformerEncoder(nn.Sequential):
 
 class MIRepNet(nn.Module):
     """Downstream-mode MIRepNet: embedding -> transformer -> linear head.
-
     forward(x) with x: (B, C, T) -> (pooled: (B, emb_size), logits: (B, n_classes))
-    where C can be 45 (original template) or your native channel count (e.g. 15).
     """
 
     def __init__(self, emb_size=256, depth=6, n_classes=2, num_channels=45, pretrain_path=None):
@@ -141,14 +128,8 @@ class MIRepNet(nn.Module):
 
     def load_pretrained(self, path, freeze_encoder=False, strict=False):
         """Load the released MIRepNet.pth backbone or a fine-tuned checkpoint.
-
-        The classification head (clshead) is included only if present in the
-        checkpoint (e.g. your fine-tuned file).
-
-        If the pretrained checkpoint uses 45 channels but this model uses a
-        different number (e.g. 15), only the temporal conv, transformer, and
-        projection layers will be loaded. The spatial conv (conv2) will be
-        re-initialized randomly for the new channel count.
+        Mismatched tensors (e.g. different channel count or class count) are skipped
+        and remain randomly initialised.
         """
         state = torch.load(path, map_location='cpu')
         own = self.state_dict()
@@ -174,3 +155,44 @@ class MIRepNet(nn.Module):
             print(f"[MIRepNet] re-initialized {len(skipped)} tensors (shape mismatch):")
             for k in skipped:
                 print(f"  - {k}: checkpoint={state[k].shape}, model={own[k].shape}")
+
+
+class ChannelAdapter(nn.Module):
+    """Maps a source montage (e.g. 15 channels) to the pretrained channel count (45)."""
+    def __init__(self, in_channels=15, out_channels=45):
+        super().__init__()
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        # x: (B, in_channels, T) -> (B, out_channels, T)
+        return self.conv(x)
+
+
+class AdaptedMIRepNet(nn.Module):
+    """Wrapper that adds a learnable channel adapter before a frozen (or partially frozen)
+    MIRepNet backbone that expects 45 channels.
+
+    Use this when the original pretrained 45-channel backbone should be kept intact.
+    """
+    def __init__(self, in_channels=15, n_classes=2, pretrain_path=None):
+        super().__init__()
+        # Create a 45-channel backbone with the original pretrained weights
+        self.base_model = MIRepNet(num_channels=45, n_classes=3)  # original had 3 classes
+        if pretrain_path is not None:
+            self.base_model.load_pretrained(pretrain_path, strict=False)
+        # Replace the classification head with the required number of classes
+        self.base_model.clshead = nn.Linear(self.base_model.clshead.in_features, n_classes)
+        # Add adapter
+        self.adapter = ChannelAdapter(in_channels, 45)
+
+    def forward(self, x):
+        x = self.adapter(x)          # (B, 15, T) -> (B, 45, T)
+        return self.base_model(x)    # returns (pooled, logits)
+
+    def load_state_dict(self, state_dict, strict=False):
+        # Custom loading to handle any potential missing keys gracefully
+        own = self.state_dict()
+        for k, v in state_dict.items():
+            if k in own and v.shape == own[k].shape:
+                own[k] = v
+        super().load_state_dict(own, strict=strict)

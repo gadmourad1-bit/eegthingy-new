@@ -12,7 +12,6 @@ from sklearn.model_selection import train_test_split
 
 
 def get_device(use_gpu=True):
-    """Get the best available device (GPU or CPU)."""
     if use_gpu and torch.cuda.is_available():
         device = torch.device('cuda')
         print(f"\n{'='*60}")
@@ -37,7 +36,7 @@ if CLASSIFIER_DIR not in sys.path:
 
 from config import TARGET_MAPPINGS, DATA_DIR, EEG_CHANNELS_TARGETS
 from classifier.run import discover_files, select_files, process_data_mirepnet
-from mirepnet_pipeline.model import MIRepNet
+from mirepnet_pipeline.model import AdaptedMIRepNet
 from mirepnet_pipeline.preprocess import prepare_for_mirepnet
 
 
@@ -47,15 +46,9 @@ from mirepnet_pipeline.preprocess import prepare_for_mirepnet
 def augment_batch(X, max_shift=20, noise_std=0.03, scale_range=(0.9, 1.1),
                    channel_dropout_p=0.05, mixup_alpha=0.0, y=None,
                    n_classes=None):
-    """Apply a bundle of light augmentations to a batch of EEG windows.
-
-    X: (n, c, t) numpy array
-    Returns augmented X (and, if mixup is used, soft targets).
-    """
     n, c, t = X.shape
     X_aug = X.copy()
 
-    # 1) random circular-ish time shift (zero padded at the edge, as before)
     if max_shift > 0:
         shifts = np.random.randint(-max_shift, max_shift + 1, size=n)
         for i, shift in enumerate(shifts):
@@ -68,16 +61,13 @@ def augment_batch(X, max_shift=20, noise_std=0.03, scale_range=(0.9, 1.1),
                 X_aug[i] = np.roll(X_aug[i], shift, axis=-1)
                 X_aug[i, :, shift:] = 0.0
 
-    # 2) Gaussian noise
     if noise_std > 0:
         X_aug = X_aug + np.random.randn(*X_aug.shape).astype(np.float32) * noise_std
 
-    # 3) random per-trial amplitude scaling
     if scale_range is not None:
         scales = np.random.uniform(scale_range[0], scale_range[1], size=(n, 1, 1)).astype(np.float32)
         X_aug = X_aug * scales
 
-    # 4) random channel dropout (zero out a few channels per trial)
     if channel_dropout_p > 0:
         mask = (np.random.rand(n, c) > channel_dropout_p).astype(np.float32)
         X_aug = X_aug * mask[:, :, None]
@@ -103,7 +93,7 @@ def fine_tune_mirepnet(
     epochs=60,
     batch_size=32,
     head_lr=5e-4,
-    backbone_lr=5e-5,
+    backbone_lr=1e-5,
     weight_decay=1e-2,
     val_ratio=0.2,
     early_stop_patience=15,
@@ -115,29 +105,6 @@ def fine_tune_mirepnet(
     warmup_epochs=5,
     device='cuda' if torch.cuda.is_available() else 'cpu',
 ):
-    """Fine-tune MIRepNet on the selected recordings.
-
-    Key differences from the original script:
-    - Defaults to freezing the pretrained backbone and only training the
-      classification head, since fine-tuning a full transformer on a
-      few hundred trials tends to overfit / destroy pretrained features.
-      Set freeze_encoder=False (or unfreeze_last_n_blocks>0) to relax this.
-    - Discriminative learning rates: a bigger LR for the head, a much
-      smaller LR for any unfrozen backbone parameters.
-    - Cosine LR schedule with linear warmup instead of a flat LR.
-    - Richer augmentation (noise, amplitude scaling, channel dropout,
-      optional mixup) instead of just time-shift.
-    - Early stopping patience is actually reachable (epochs > patience
-      by default), and the best checkpoint (by val loss, not just val
-      acc) is restored at the end.
-    - Weight decay and label smoothing added for regularization.
-
-    Parameters
-    ----------
-    device : str
-        'cuda' for GPU training or 'cpu' for CPU training.
-    """
-
     all_X, all_y = [], []
     for f in train_files:
         X, y = process_data_mirepnet(
@@ -160,9 +127,7 @@ def fine_tune_mirepnet(
         raise ValueError("Only one class found. Check your annotations.")
     if X.shape[0] < 150:
         print(f"WARNING: only {X.shape[0]} trials total. With this little data, "
-              f"strongly prefer freeze_encoder=True and heavier augmentation/regularization. "
-              f"Also consider whether all trials came from a single session — session-to-session "
-              f"drift is a very common cause of good CV / poor held-out-test performance in MI-EEG.")
+              f"strongly prefer freeze_encoder=True and heavier augmentation/regularization.")
 
     label_map = {old: new for new, old in enumerate(classes)}
     y_mapped = np.array([label_map[yy] for yy in y])
@@ -173,13 +138,12 @@ def fine_tune_mirepnet(
     print(f"Source sfreq: {sfreq} Hz")
     print(f"Native channel count: {len(EEG_CHANNELS_TARGETS)}")
 
-    # Preprocess: resample to 250 Hz, Euclidean Alignment, normalization, no 45-ch interpolation
     X_prep, W, ea_whitener = prepare_for_mirepnet(
         X,
         EEG_CHANNELS_TARGETS,
         sfreq,
         fit_ea=True,
-        project_to_template=False,  # keep native 15 channels
+        project_to_template=False,
     )
     print(f"Preprocessed shape: {X_prep.shape}")
     print(f"Preprocessed data range: min={X_prep.min():.4f}, max={X_prep.max():.4f}")
@@ -196,47 +160,31 @@ def fine_tune_mirepnet(
     if not os.path.exists(pretrain_path):
         raise FileNotFoundError(f"Pretrained weight not found at {pretrain_path}.")
 
-    num_channels = len(EEG_CHANNELS_TARGETS)  # 15
-    model = MIRepNet(
-        pretrain_path=pretrain_path,
-        n_classes=n_classes,
-        num_channels=num_channels,
-    )
+    # Use adapter model: base 45ch backbone + learned 15->45 projection + new head
+    model = AdaptedMIRepNet(in_channels=len(EEG_CHANNELS_TARGETS), n_classes=n_classes,
+                            pretrain_path=pretrain_path)
 
-    # ---- Freezing strategy -------------------------------------------------
-    # Default: freeze everything except the classification head. Optionally
-    # unfreeze the last N transformer blocks for a lighter form of full
-    # fine-tuning once the head-only model is working.
-    head_params = []
+    # Parameter groups
+    adapter_params = list(model.adapter.parameters())
+    head_params = list(model.base_model.clshead.parameters())
     backbone_params = []
-    for name, param in model.named_parameters():
-        if 'clshead' in name:
-            param.requires_grad = True
-            head_params.append(param)
-        else:
-            param.requires_grad = False  # will be overridden if unfreezing
-
     if not freeze_encoder:
-        # Unfreeze all backbone params
-        for name, param in model.named_parameters():
+        for name, param in model.base_model.named_parameters():
             if 'clshead' not in name:
-                param.requires_grad = True
                 backbone_params.append(param)
     elif unfreeze_last_n_blocks > 0:
-        # Unfreeze only the last N transformer blocks
+        # Unfreeze last N transformer blocks
         block_ids = set()
-        for name, _ in model.named_parameters():
+        for name, _ in model.base_model.named_parameters():
             if 'clshead' in name:
                 continue
-            # Extract block index from parameter names like
-            # transformer.blocks.3.0.fn.0.norm1.weight
             parts = name.split('.')
-            for i, part in enumerate(parts):
+            for part in parts:
                 if part.isdigit():
                     block_ids.add(int(part))
         if block_ids:
             keep_blocks = sorted(block_ids)[-unfreeze_last_n_blocks:]
-            for name, param in model.named_parameters():
+            for name, param in model.base_model.named_parameters():
                 if 'clshead' in name:
                     continue
                 parts = name.split('.')
@@ -244,16 +192,29 @@ def fine_tune_mirepnet(
                 for part in parts:
                     if part.isdigit():
                         block_index = int(part)
-                        break  # use first numeric token (block index)
+                        break
                 if block_index in keep_blocks:
                     param.requires_grad = True
                     backbone_params.append(param)
+                else:
+                    param.requires_grad = False
+    else:
+        # Freeze all backbone
+        for name, param in model.base_model.named_parameters():
+            if 'clshead' not in name:
+                param.requires_grad = False
 
-    trainable_params = head_params + backbone_params
+    # Set requires_grad explicitly
+    for p in adapter_params + head_params:
+        p.requires_grad = True
+    for p in backbone_params:
+        p.requires_grad = True
+
+    trainable_params = adapter_params + head_params + backbone_params
     n_trainable = sum(p.numel() for p in trainable_params)
     n_total = sum(p.numel() for p in model.parameters())
     print(f"Trainable parameters: {n_trainable:,} / {n_total:,} "
-          f"(head: {sum(p.numel() for p in head_params):,}, "
+          f"(adapter+head: {sum(p.numel() for p in adapter_params+head_params):,}, "
           f"backbone: {sum(p.numel() for p in backbone_params):,})")
 
     model = model.to(device)
@@ -267,8 +228,9 @@ def fine_tune_mirepnet(
     train_dataset = TensorDataset(X_train_t, y_train_t)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
 
-    # Discriminative learning rates: head trains faster than backbone.
-    param_groups = [{'params': head_params, 'lr': head_lr}]
+    param_groups = [
+        {'params': adapter_params + head_params, 'lr': head_lr}
+    ]
     if backbone_params:
         param_groups.append({'params': backbone_params, 'lr': backbone_lr})
     optimizer = torch.optim.AdamW(param_groups, weight_decay=weight_decay)
@@ -369,7 +331,6 @@ def fine_tune_mirepnet(
               f"train_acc={train_acc:.4f}  val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  "
               f"lr_head={cur_lr_head:.2e}  ({time.time()-t0:.1f}s)")
 
-        # Track best by val_loss (more stable signal than acc on small val sets)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_val_acc = val_acc
@@ -408,19 +369,19 @@ def main():
     print(f"\nFine-tuning on {len(train_files)} file(s):")
     device = get_device(use_gpu=True)
 
-    # Stage 1: head-only fine-tuning (safe default for small datasets).
+    # Stage 1: train adapter + head with frozen backbone
     model = fine_tune_mirepnet(
         train_files,
         epochs=60,
         batch_size=32,
         head_lr=5e-4,
-        backbone_lr=5e-5,
+        backbone_lr=1e-5,
         weight_decay=1e-2,
         early_stop_patience=15,
         use_augment=True,
         mixup_alpha=0.2,
         label_smoothing=0.05,
-        freeze_encoder=True,
+        freeze_encoder=True,          # keep backbone frozen
         unfreeze_last_n_blocks=0,
         warmup_epochs=5,
         device=device,
