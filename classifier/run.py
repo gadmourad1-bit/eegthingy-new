@@ -1,4 +1,3 @@
-
 import glob
 import mne
 import numpy as np
@@ -18,13 +17,14 @@ from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_
                     TARGET_MAPPINGS, CONF_FLOOR,
                     RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
+from mne.preprocessing import compute_current_source_density
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, confusion_matrix
 
-try:   # optional: enables the Riemannian decoder; EA works without pyriemann
+try:
     from pyriemann.estimation import Covariances
     from pyriemann.tangentspace import TangentSpace
     from pyriemann.utils.mean import mean_riemann
@@ -32,19 +32,25 @@ try:   # optional: enables the Riemannian decoder; EA works without pyriemann
     _HAS_PYRIEMANN = True
 except ImportError:
     _HAS_PYRIEMANN = False
+
+try:
+    from mirepnet_pipeline.inference import MIRepNetDecoder
+    _HAS_MIREPNET = True
+except ImportError:
+    _HAS_MIREPNET = False
+
 from utils.devices import OpenBCI
 from ws import WebSocket
 from smoother import Smoother
 
+
 def bandpass(data, sfreq, l_freq, h_freq):
     return mne.filter.filter_data(data, sfreq=sfreq, l_freq=l_freq, h_freq=h_freq,
-                                  method='fir', phase='minimum', fir_design='firwin',
+                                  method='fir', phase='zero', fir_design='firwin',
                                   verbose=False, **FB_TRANS)
 
+
 def _band_decomp(feats, coef):
-    """Slice boundaries of each band's block in the concatenated feature vector,
-    plus that block's mean contribution (feat . coef) to the linear score over the
-    training set. The discriminant is linear, so score = sum_band(contrib_b) + bias."""
     slices, start = [], 0
     for f in feats:
         slices.append((start, start + f.shape[1]))
@@ -53,10 +59,8 @@ def _band_decomp(feats, coef):
     contribs = np.column_stack([F[:, s:e] @ coef[s:e] for (s, e) in slices])
     return slices, contribs.mean(axis=0)
 
+
 def build_event_id(raw, target_id_dict):
-    """Expand prefix-based target mappings to the exact annotation descriptions
-    present in this raw file. Each annotation is assigned the code of the first
-    target whose key matches it (exact or hierarchical prefix with '/')."""
     event_id = {}
     for desc in set(raw.annotations.description):
         d = str(desc).strip().lower()
@@ -68,12 +72,22 @@ def build_event_id(raw, target_id_dict):
     return event_id
 
 
-def process_data(file_name, target_id_dict):
+def process_data(file_name, target_id_dict, apply_car=True, apply_laplacian=False):
     print(f"\n--- Loading: {file_name} ---")
     raw = mne.io.read_raw_fif(file_name, preload=True)
     raw.pick(EEG_CHANNELS_TARGETS)
     raw.set_montage('standard_1020', on_missing='ignore')
-    raw.annotations.description = np.array([str(d).strip().lower() for d in raw.annotations.description])
+
+    if apply_car:
+        raw.set_eeg_reference('average', projection=False)
+        print("Applied Common Average Reference (CAR)")
+
+    if apply_laplacian:
+        raw = compute_current_source_density(raw)
+        print("Applied Surface Laplacian")
+
+    raw.annotations.description = np.array([str(d).strip().lower()
+                                            for d in raw.annotations.description])
 
     event_id = build_event_id(raw, target_id_dict)
     if not event_id:
@@ -84,7 +98,7 @@ def process_data(file_name, target_id_dict):
     events, event_id_used = mne.events_from_annotations(raw, event_id=event_id)
 
     def band_epochs(l_freq, h_freq):
-        filtered = raw.copy().filter(l_freq, h_freq, method='fir', phase='minimum',
+        filtered = raw.copy().filter(l_freq, h_freq, method='fir', phase='zero',
                                      fir_design='firwin', verbose=False, **FB_TRANS)
         return mne.Epochs(filtered, events, event_id=event_id_used,
                           tmin=EPOCH_TMIN, tmax=EPOCH_TMAX, baseline=None,
@@ -96,18 +110,81 @@ def process_data(file_name, target_id_dict):
 
     broadband = band_epochs(FB_BANDS[0][0], FB_BANDS[-1][1]).get_data(copy=False)
     p2p = (broadband.max(axis=2) - broadband.min(axis=2)).max(axis=1)
-    keep = p2p < EPOCH_REJECT['eeg']
+    keep = p2p < EPOCH_REJECT['eeg'] * 2.0
     X, y = X[keep], y[keep]
 
-    print(f"Created {len(y)} epochs ({int(keep.sum())}/{len(keep)} kept) for classes {sorted(set(y.tolist()))}")
+    print(f"Created {len(y)} epochs ({int(keep.sum())}/{len(keep)} kept) "
+          f"for classes {sorted(set(y.tolist()))}")
     return X, y
+
+
+def process_data_mirepnet(file_name, target_id_dict, tmin=0.5, tmax=2.5,
+                          apply_car=True, apply_laplacian=False,
+                          l_freq=8.0, h_freq=30.0):
+    print(f"\n--- Loading (MIRepNet): {file_name} ---")
+    raw = mne.io.read_raw_fif(file_name, preload=True)
+    raw.pick(EEG_CHANNELS_TARGETS)
+    raw.set_montage('standard_1020', on_missing='ignore')
+
+    if apply_car:
+        raw.set_eeg_reference('average', projection=False)
+        print("Applied Common Average Reference (CAR)")
+
+    if apply_laplacian:
+        raw = compute_current_source_density(raw)
+        print("Applied Surface Laplacian")
+
+    # Band‑pass filter to focus on motor imagery rhythms
+    raw.filter(l_freq, h_freq, method='fir', phase='zero',
+               fir_design='firwin', verbose=False)
+
+    raw.annotations.description = np.array([str(d).strip().lower()
+                                            for d in raw.annotations.description])
+
+    event_id = build_event_id(raw, target_id_dict)
+    if not event_id:
+        raise ValueError(
+            f"No annotations in {file_name} matched any prefix in {target_id_dict}. "
+            f"Annotations present: {sorted(set(raw.annotations.description))[:5]}…"
+        )
+    events, event_id_used = mne.events_from_annotations(raw, event_id=event_id)
+
+    epochs = mne.Epochs(
+        raw,
+        events,
+        event_id=event_id_used,
+        tmin=tmin,
+        tmax=tmax,
+        baseline=None,
+        preload=True,
+        proj=False,
+        on_missing='warn',
+    )
+
+    X = epochs.get_data(copy=False)
+    y = epochs.events[:, -1]
+
+    # Artifact rejection: peak‑to‑peak threshold on the filtered data
+    p2p = (X.max(axis=2) - X.min(axis=2)).max(axis=1)
+    keep = p2p < EPOCH_REJECT['eeg'] * 2.0
+    X, y = X[keep], y[keep]
+
+    classes, counts = np.unique(y, return_counts=True)
+    print(f"Created {len(y)} MIRepNet epochs ({int(keep.sum())}/{len(keep)} kept) "
+          f"for classes {classes} counts {counts}")
+    print(f"Epoch shape: {X.shape}")
+
+    if len(classes) < 2:
+        print(f"WARNING: Only {len(classes)} class(es) found in {file_name}.")
+
+    return X, y
+
 
 def discover_files():
     return sorted(glob.glob(os.path.join(DATA_DIR, '*_mi_raw.fif')))
 
+
 class FilterBankCSP(BaseEstimator, ClassifierMixin):
-    # X is (n_epochs, n_bands, n_channels, n_times): one CSP per band, log-variance
-    # features concatenated across bands, classified with shrinkage-LDA.
     def __init__(self, n_components=CSP_COMPONENTS):
         self.n_components = n_components
 
@@ -135,31 +212,17 @@ class FilterBankCSP(BaseEstimator, ClassifierMixin):
         return self.lda_.predict_proba(self._features(X))
 
     def analyze(self, X):
-        """One feature pass -> (probabilities, signed discriminant score, per-band
-        centered contribution to that score). band_signal[b] > 0 pushes toward
-        classes_[1], < 0 toward classes_[0]; magnitude = how hard band b is voting."""
         F = self._features(X)
         contribs = np.column_stack([F[:, s:e] @ self.coef_[s:e] for (s, e) in self.band_slices_])
         return self.lda_.predict_proba(F), self.lda_.decision_function(F), contribs - self.band_mid_
 
-def build_pipeline():
-    return FilterBankCSP()
 
 class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
-    """Euclidean Alignment (He et al. 2020) + Filter-bank CSP — the online/offline
-    decoder. Per band, each domain is whitened so its mean covariance becomes the
-    identity (R^-1/2, R = arithmetic-mean per-trial covariance), removing
-    subject/session bias before CSP. fit() aligns per group (subject/session);
-    set_reference(X_cal) recomputes the whitener from a calibration batch for the
-    online distribution shift. Defaults to 2 CSP components (best cross-subject
-    transfer). X is (n_epochs, n_bands, n_channels, n_times).
-    """
-
     def __init__(self, n_components=2):
         self.n_components = n_components
 
     @staticmethod
-    def _whitener(Xb):  # Xb (n, C, T) -> R^{-1/2}
+    def _whitener(Xb):
         R = np.einsum("nct,ndt->cd", Xb, Xb) / (len(Xb) * Xb.shape[2])
         w, V = np.linalg.eigh(R)
         w = np.clip(w, 1e-12, None)
@@ -173,7 +236,7 @@ class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y, groups=None):
         nb = X.shape[1]
-        self.ref_white_ = [self._whitener(X[:, b]) for b in range(nb)]  # pooled fallback ref
+        self.ref_white_ = [self._whitener(X[:, b]) for b in range(nb)]
         if groups is None:
             Xa = self._align(X, self.ref_white_)
         else:
@@ -201,12 +264,6 @@ class EAFilterBankCSP(BaseEstimator, ClassifierMixin):
 
 
 class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
-    """Riemannian alternative to EAFilterBankCSP (same fit/set_reference/predict_proba/
-    analyze API). Per band: LWF covariances, Riemannian recentering per group (each
-    session recentred to the identity), tangent-space projection, logistic regression.
-    set_reference() recentres live data on an in-context calibration block, absorbing the
-    train->online shift. X is (n_epochs, n_bands, n_channels, n_times)."""
-
     def fit(self, X, y, groups=None):
         self.classes_ = np.unique(y)
         self.cov_, self.ts_, self.ref_white_ = [], [], []
@@ -218,7 +275,7 @@ class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
             aligned = ts.fit_transform(self._recenter(C, groups))
             self.cov_.append(cov)
             self.ts_.append(ts)
-            self.ref_white_.append(invsqrtm(mean_riemann(C)))   # fallback ref: training mean
+            self.ref_white_.append(invsqrtm(mean_riemann(C)))
             feats.append(aligned)
         self.lr_ = LogisticRegression(max_iter=2000)
         self.lr_.fit(np.hstack(feats), y)
@@ -265,28 +322,10 @@ class FilterBankTangentSpace(BaseEstimator, ClassifierMixin):
 
 
 class BoundaryRecenter:
-    """Unsupervised adaptive decision-boundary recentering (no labels, model frozen).
-
-    EA aligns covariance but not *where* a subject's log-odds sit, so cross-subject the
-    LDA boundary is offset (left-skew; rest reads as a confident class) and drifts
-    within a session (the decoder sticks). Seed the neutral from the calibration rest
-    block (true idle baseline), then track it from rest-like windows ONLY (so sustained
-    real MI never pulls it), clamped near the seed so it can't run away. Decisions and
-    confidence are taken on the effective margin z = s - center - offset; gating that
-    at CONF_FLOOR gives a rest dead-zone for free (idle sits near the boundary -> low
-    confidence -> no commit).
-
-    Two distinct manual adjustments: nudge() is the operator's bias correction (GUI
-    arrows) — a persistent offset stacked on the tracked center, deliberately outside
-    the EMA so the tracker can neither decay it back nor be starved by it. shift()
-    moves the tracked center AND its clamp anchor, for genuine operating-point changes
-    (a band toggled off moves where the masked score sits at rest).
-    """
-
     def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
         self.alpha = alpha
         self.clamp = clamp
-        self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
+        self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))
         self.center = 0.0
         self.seed_center = 0.0
         self.offset = 0.0
@@ -309,9 +348,6 @@ class BoundaryRecenter:
             self.seed_center += delta
 
     def update(self, s):
-        """Track the rest median from rest-like windows only (gated on the TRACKED
-        center, not the offset boundary), clamped to seed +/- clamp; return the
-        effective margin z = s - center - offset."""
         with self._lock:
             if abs(s - self.center) < self.rest_margin:
                 self.center += self.alpha * (s - self.center)
@@ -321,8 +357,6 @@ class BoundaryRecenter:
 
 
 def _stream_windows(bci, sfreq, train_idx, window_n, warmup_n, seconds, prompt):
-    """Stream `seconds` of EEG with a countdown, then slice it into the per-band
-    windows the decoder consumes. Returns None if too little data was captured."""
     buffer_n = window_n + warmup_n
     collected, lock = [], threading.Lock()
 
@@ -354,10 +388,40 @@ def _stream_windows(bci, sfreq, train_idx, window_n, warmup_n, seconds, prompt):
         windows.append(np.stack([bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS], axis=0))
     return np.array(windows)
 
+
+def _stream_windows_raw(bci, sfreq, train_idx, window_n, seconds, prompt):
+    buffer_n = window_n
+    collected, lock = [], threading.Lock()
+
+    def collect(chunk):
+        eeg_all = chunk[bci.eeg, :]
+        if eeg_all.shape[1] == 0 or max(train_idx) >= eeg_all.shape[0]:
+            return
+        with lock:
+            collected.append(eeg_all[train_idx, :].astype(np.float64) / 1e6)
+
+    bci.callback = collect
+    bci.start()
+    print(prompt)
+    for s in range(seconds, 0, -1):
+        print(f"  {s:2d}", end="\r", flush=True)
+        time.sleep(1)
+    bci.stop()
+    bci.callback = None
+
+    with lock:
+        full = np.hstack(collected) if collected else np.zeros((len(train_idx), 0))
+    if full.shape[1] < buffer_n:
+        return None
+
+    step = max(1, int(round(0.5 * sfreq)))
+    windows = []
+    for end in range(buffer_n, full.shape[1] + 1, step):
+        windows.append(full[:, end - buffer_n:end])
+    return np.array(windows)
+
+
 def record_calibration(bci, sfreq, train_idx, window_n, warmup_n):
-    """Two-phase calibration. Phase 1 (task imagery) captures the online-context
-    distribution for set_reference(); phase 2 (imagine nothing) captures true rest,
-    whose scores become the decision-boundary baseline."""
     X_task = _stream_windows(
         bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_TASK_SECONDS,
         f"\nCalibration 1/2: imagine the task(s), alternating sides, for {CALIBRATION_TASK_SECONDS}s…")
@@ -365,6 +429,7 @@ def record_calibration(bci, sfreq, train_idx, window_n, warmup_n):
         bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_REST_SECONDS,
         f"\nCalibration 2/2: relax and imagine NOTHING for {CALIBRATION_REST_SECONDS}s…")
     return X_task, X_rest
+
 
 def parse_indices(raw, n):
     out = []
@@ -379,6 +444,7 @@ def parse_indices(raw, n):
         if i - 1 not in out:
             out.append(i - 1)
     return out
+
 
 def select_files(prompt, files):
     while True:
@@ -399,9 +465,8 @@ def select_files(prompt, files):
             continue
         return [files[i] for i in idxs]
 
+
 def select_device():
-    """USB (real Cyton+Daisy) or the brainflow synthetic board. Returns the
-    `synthetic` flag for OpenBCI, or None if aborted."""
     print("\nSelect EEG device:")
     print("  1) USB       — OpenBCI Cyton+Daisy")
     print("  2) Synthetic — brainflow test board (no hardware)")
@@ -416,12 +481,13 @@ def select_device():
             return True
         print("pick 1 or 2")
 
+
 def select_decoder():
-    """EA + FB-CSP (fast, default) or the Riemannian tangent-space decoder. Returns a
-    decoder kind string ('ea' | 'riemann')."""
     print("\nSelect decoder:")
     print("  1) EA + FB-CSP     — Euclidean Alignment (fast, default)")
     print("  2) Riemann tangent — Riemannian alignment + tangent space + LR")
+    if _HAS_MIREPNET:
+        print("  3) MIRepNet        — pretrained 45-ch transformer")
     while True:
         try:
             c = input("> ").strip().lower()
@@ -434,14 +500,38 @@ def select_decoder():
                 print("pyriemann not installed — using EA (`uv add pyriemann` to enable Riemann).")
                 return "ea"
             return "riemann"
-        print("pick 1 or 2")
+        if c in ("3", "mirepnet", "mi"):
+            if not _HAS_MIREPNET:
+                print("MIRepNet is not available — check mirepnet_pipeline/inference.py")
+                continue
+            return "mirepnet"
+        print("pick 1, 2 or 3")
 
-def make_decoder(kind):
-    """Instantiate the chosen decoder; both share the fit/set_reference/predict_proba/analyze API."""
-    return FilterBankTangentSpace() if kind == "riemann" else EAFilterBankCSP(n_components=2)
+
+def make_decoder(kind, sfreq=None):
+    if kind == "riemann":
+        return FilterBankTangentSpace()
+    if kind == "mirepnet":
+        finetuned_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "mirepnet_pipeline", "weights", "MIRepNet_finetuned.pth"
+        )
+        if os.path.exists(finetuned_path):
+            print(f"[MIRepNet] Using fine‑tuned checkpoint: {finetuned_path}")
+            return MIRepNetDecoder(sfreq=sfreq, pretrain_path=finetuned_path)
+        else:
+            print("[MIRepNet] Fine‑tuned checkpoint not found; using original pretrained weights.")
+            return MIRepNetDecoder(sfreq=sfreq)
+    return EAFilterBankCSP(n_components=2)
+
 
 def decoder_label(kind):
-    return "Riemann tangent-space (RA)" if kind == "riemann" else "EA + FB-CSP (2 comp)"
+    if kind == "riemann":
+        return "Riemann tangent-space (RA)"
+    if kind == "mirepnet":
+        return "MIRepNet (pretrained transformer)"
+    return "EA + FB-CSP (2 comp)"
+
 
 def run_offline():
     files = discover_files()
@@ -467,28 +557,42 @@ def run_offline():
 
     decoder_kind = select_decoder()
 
-    def load_xy(file_list):
-        parts = [process_data(f, TARGET_MAPPINGS) for f in file_list]
-        X = np.concatenate([X for X, _ in parts])
-        y = np.concatenate([y for _, y in parts])
-        groups = np.concatenate([[i] * len(yy) for i, (_, yy) in enumerate(parts)])
-        return X, y, groups
+    if decoder_kind == "mirepnet":
+        def load_xy(file_list):
+            parts = [process_data_mirepnet(f, TARGET_MAPPINGS) for f in file_list]
+            X = np.concatenate([X for X, _ in parts])
+            y = np.concatenate([y for _, y in parts])
+            groups = np.concatenate([[i] * len(yy) for i, (_, yy) in enumerate(parts)])
+            return X, y, groups
+    else:
+        def load_xy(file_list):
+            parts = [process_data(f, TARGET_MAPPINGS) for f in file_list]
+            X = np.concatenate([X for X, _ in parts])
+            y = np.concatenate([y for _, y in parts])
+            groups = np.concatenate([[i] * len(yy) for i, (_, yy) in enumerate(parts)])
+            return X, y, groups
 
     X_train, y_train, g_train = load_xy(train_files)
     X_test, y_test, _ = load_xy(test_files)
 
+    decoder_sfreq = None
+    if decoder_kind == "mirepnet":
+        tmp_raw = mne.io.read_raw_fif(train_files[0], preload=False)
+        decoder_sfreq = float(tmp_raw.info['sfreq'])
+        print(f"MIRepNet source sfreq = {decoder_sfreq} Hz")
+
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
     fold_acc = []
     for tr_i, va_i in cv.split(X_train, y_train):
-        m = make_decoder(decoder_kind).fit(X_train[tr_i], y_train[tr_i], groups=g_train[tr_i])
+        m = make_decoder(decoder_kind, sfreq=decoder_sfreq).fit(X_train[tr_i], y_train[tr_i], groups=g_train[tr_i])
         m.set_reference(X_train[va_i])
         fold_acc.append(accuracy_score(y_train[va_i], m.predict(X_train[va_i])))
     fold_acc = np.array(fold_acc)
     print(f"\n[{decoder_label(decoder_kind)}]  5-fold CV on training pool: "
           f"{fold_acc.mean() * 100:.2f}% +/- {fold_acc.std() * 100:.2f}%")
 
-    clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=g_train)
-    clf.set_reference(X_test)   # unsupervised alignment to the target (no labels)
+    clf = make_decoder(decoder_kind, sfreq=decoder_sfreq).fit(X_train, y_train, groups=g_train)
+    clf.set_reference(X_test)
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
@@ -504,16 +608,15 @@ def run_offline():
     print(f"Motor Imagery Test Accuracy: {acc * 100:.2f}%")
     print("=" * 35)
 
+
 RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
 
+
 def save_online_recording(eeg_chunks, sfreq, out_path):
-    """Concatenate the raw EEG chunks captured during a live run (channels x samples,
-    microvolts) into an MNE Raw and save as *_raw.fif — same format as the training
-    files, so the session can be replayed and analyzed with the existing pipeline."""
     if not eeg_chunks:
         print("recording: no EEG captured, nothing saved")
         return
-    data = np.hstack(eeg_chunks).astype(np.float64) / 1e6          # microvolts -> volts
+    data = np.hstack(eeg_chunks).astype(np.float64) / 1e6
     n_ch = data.shape[0]
     ch_names = (list(EEG_CHANNELS_MAPPING) if n_ch == len(EEG_CHANNELS_MAPPING)
                 else [f"EEG{i + 1}" for i in range(n_ch)])
@@ -525,10 +628,8 @@ def save_online_recording(eeg_chunks, sfreq, out_path):
     raw.save(out_path, overwrite=True, verbose=False)
     print(f"recording saved: {raw.n_times} samples ({raw.n_times / sfreq:.1f}s) -> {out_path}")
 
+
 def save_decision_log(rows, out_path):
-    """Per-window decoder trace (time, band-masked log-odds, adaptive center, recentered
-    margin, prediction, confidence, committed class, live conf floor, band mask) for
-    offline analysis of skew/drift."""
     if not rows:
         return
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -537,6 +638,7 @@ def save_decision_log(rows, out_path):
         for r in rows:
             f.write(",".join(str(x) for x in r) + "\n")
     print(f"decision log saved: {len(rows)} rows -> {out_path}")
+
 
 def run_online(headless=False):
     synthetic = select_device()
@@ -563,19 +665,27 @@ def run_online(headless=False):
     for f in train_files:
         print(f"  - {os.path.basename(f)}")
 
-    parts = [process_data(f, TARGET_MAPPINGS) for f in train_files]
-    X_train = np.concatenate([X for X, _ in parts])
-    y_train = np.concatenate([y for _, y in parts])
-    groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
-    n_bands, n_channels, n_times = X_train.shape[1], X_train.shape[2], X_train.shape[3]
-
-    clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=groups)
-    print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs "
-          f"({n_bands} bands x {n_channels} ch x {n_times} samples).")
+    if decoder_kind == "mirepnet":
+        parts = [process_data_mirepnet(f, TARGET_MAPPINGS) for f in train_files]
+        X_train = np.concatenate([X for X, _ in parts])
+        y_train = np.concatenate([y for _, y in parts])
+        groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
+        n_bands, n_channels, n_times = 1, X_train.shape[1], X_train.shape[2]
+    else:
+        parts = [process_data(f, TARGET_MAPPINGS) for f in train_files]
+        X_train = np.concatenate([X for X, _ in parts])
+        y_train = np.concatenate([y for _, y in parts])
+        groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
+        n_bands, n_channels, n_times = X_train.shape[1], X_train.shape[2], X_train.shape[3]
 
     raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
     full_names = raw_full.ch_names
     train_sfreq = float(raw_full.info['sfreq'])
+
+    clf = make_decoder(decoder_kind, sfreq=train_sfreq).fit(X_train, y_train, groups=groups)
+    print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs "
+          f"({n_bands} bands x {n_channels} ch x {n_times} samples).")
+
     try:
         train_idx = [full_names.index(name) for name in EEG_CHANNELS_TARGETS]
     except ValueError as e:
@@ -597,8 +707,12 @@ def run_online(headless=False):
         print(f"warning: live sfreq={sfreq} differs from training sfreq={train_sfreq}; "
               "predictions may degrade")
 
-    window_n = n_times
-    warmup_n = int(round(FILTER_WARMUP_S * sfreq))
+    if decoder_kind == "mirepnet":
+        window_n = int(round(1.0 * sfreq))
+        warmup_n = 0
+    else:
+        window_n = n_times
+        warmup_n = int(round(FILTER_WARMUP_S * sfreq))
     buffer_n = window_n + warmup_n
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
     buffer_lock = threading.Lock()
@@ -607,9 +721,16 @@ def run_online(headless=False):
           f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
           f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
-    # Alignment reference from the task block; boundary baseline from the rest block.
     recenter = BoundaryRecenter()
-    X_task, X_rest = record_calibration(bci, sfreq, train_idx, window_n, warmup_n)
+    if decoder_kind == "mirepnet":
+        X_task = _stream_windows_raw(
+            bci, sfreq, train_idx, window_n, CALIBRATION_TASK_SECONDS,
+            f"\nCalibration 1/2: imagine the task(s) for {CALIBRATION_TASK_SECONDS}s…")
+        X_rest = _stream_windows_raw(
+            bci, sfreq, train_idx, window_n, CALIBRATION_REST_SECONDS,
+            f"\nCalibration 2/2: relax and imagine NOTHING for {CALIBRATION_REST_SECONDS}s…")
+    else:
+        X_task, X_rest = record_calibration(bci, sfreq, train_idx, window_n, warmup_n)
 
     if X_task is not None and len(X_task) >= 2:
         clf.set_reference(X_task)
@@ -643,14 +764,12 @@ def run_online(headless=False):
                   recenter=recenter, base_center=recenter.center)
 
     prev_print_t = None
-
-    # GUI live mode: record the whole session (raw EEG + decoder trace) for replay/analysis.
     record = not headless
     rec_eeg, rec_rows = [], []
     rec_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     prev_mask = None
-    recent_sig = deque(maxlen=50)   # ~10 s of per-band votes, for toggle compensation
+    recent_sig = deque(maxlen=50)
 
     def on_chunk(chunk):
         nonlocal buffer, prev_print_t, prev_mask
@@ -662,7 +781,7 @@ def run_online(headless=False):
             return
 
         if record:
-            rec_eeg.append(eeg_all.astype(np.float32))     # all EEG channels, microvolts
+            rec_eeg.append(eeg_all.astype(np.float32))
 
         eeg = eeg_all[train_idx, :].astype(np.float64, copy=False) / 1e6
 
@@ -674,8 +793,11 @@ def run_online(headless=False):
                 return
             buf = buffer.copy()
 
-        bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
-        window = np.stack(bands, axis=0)[np.newaxis, ...]
+        if decoder_kind == "mirepnet":
+            window = buf[np.newaxis, ...]
+        else:
+            bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
+            window = np.stack(bands, axis=0)[np.newaxis, ...]
 
         band_mask = None
         if headless:
@@ -685,8 +807,6 @@ def run_online(headless=False):
             _, score, band_sig = clf.analyze(window)
             sig = band_sig[0]
             band_mask = list(gui.band_on)
-            # a toggle moves where the masked score sits at rest: shift the tracked
-            # center by the changed bands' recent mean vote so the boundary follows
             if prev_mask is not None and band_mask != prev_mask and recent_sig:
                 hist = np.mean(recent_sig, axis=0)
                 delta = sum((float(hist[b]) if band_mask[b] else -float(hist[b]))
@@ -698,15 +818,14 @@ def run_online(headless=False):
                           f"-> boundary shifted {delta:+.2f}")
             prev_mask = band_mask
             recent_sig.append(sig.copy())
-            # excluded bands: subtract their centered vote from the linear score
             s = float(score[0]) - sum(float(sig[b]) for b in range(len(sig))
                                       if b < len(band_mask) and not band_mask[b])
-        z = recenter.update(s)                            # recenter on the subject's neutral
-        center_used = s - z          # tracked center + manual offset, consistent with z
+        z = recenter.update(s)
+        center_used = s - z
         if not headless:
             gui.push_decision(s, center_used, sig)
         p1 = 1.0 / (1.0 + np.exp(-np.clip(z, -50.0, 50.0)))
-        probs = np.array([1.0 - p1, p1])                  # recentered probabilities
+        probs = np.array([1.0 - p1, p1])
         pred = clf.classes_[int(np.argmax(probs))]
         conf = float(np.max(probs))
         breakdown = ", ".join(f"{c}={p*100:.1f}%" for c, p in zip(clf.classes_, probs))
@@ -753,6 +872,7 @@ def run_online(headless=False):
             save_online_recording(rec_eeg, sfreq, os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_raw.fif"))
             save_decision_log(rec_rows, os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_decisions.csv"))
 
+
 def menu():
     print("=" * 35)
     print(" 1) Offline  (pick training/testing files)")
@@ -761,6 +881,7 @@ def menu():
     print(" q) Quit")
     print("=" * 35)
     return input("> ").strip().lower()
+
 
 def main():
     argv = sys.argv[1:]
@@ -787,6 +908,7 @@ def main():
         if choice in ('q', 'quit', 'exit'):
             return
         print("invalid choice\n")
+
 
 if __name__ == '__main__':
     try:

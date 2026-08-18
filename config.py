@@ -1,21 +1,28 @@
 DATA_DIR = './data'
 STRIDE_S = 0.2
 FILTER_WARMUP_S = 2.0
-CALIBRATION_SECONDS = 45        # single-block flow (sbc/lean_online only)
-CALIBRATION_TASK_SECONDS = 30   # calibration phase 1: imagine the task(s) -> alignment reference
-CALIBRATION_REST_SECONDS = 30   # calibration phase 2: imagine nothing -> decision-boundary baseline
-BOUNDARY_STEP = 0.25            # log-odds moved per manual boundary-arrow click in the live GUI
+CALIBRATION_SECONDS = 45
+CALIBRATION_TASK_SECONDS = 30
+CALIBRATION_REST_SECONDS = 30
+BOUNDARY_STEP = 0.25
 EEG_CHANNELS_MAPPING = [
-    'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',  # Cyton ch 1-8  (ch8 unplugged)
-    'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',    # Daisy  ch 9-16
+    'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',
+    'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',
 ]
 EEG_CHANNELS_TARGETS = [
-    'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz',       # ch8 is marked as dead
+    'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz',
     'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4'
 ]
 EPOCH_TMIN = 0.5
 EPOCH_TMAX = 2.5
-FB_BANDS = [(8.0, 12.0), (11.0, 15.0), (14.0, 20.0), (20.0, 30.0)]
+# Narrower, more focused motor imagery bands
+FB_BANDS = [
+    (8.0, 12.0),    # alpha/mu
+    (10.0, 12.0),   # upper alpha
+    (16.0, 20.0),   # low beta
+    (20.0, 24.0),   # mid beta
+    # (24.0, 30.0)  # optional high beta
+]
 FB_TRANS = dict(l_trans_bandwidth=2.0, h_trans_bandwidth=2.5)
 CSP_COMPONENTS = 4
 EPOCH_REJECT = dict(eeg=100e-6)
@@ -26,10 +33,10 @@ PHASES = {1: "prep", 2: "plan", 3: "task", 4: "rest"}
 SMOOTHER_N = 5
 SMOOTHER_M = 4
 SMOOTHER_DWELL = 3
-CONF_FLOOR = 0.85    # commit gate on the recentered confidence; also acts as the rest dead-zone
-RECENTER_ALPHA = 0.01       # EMA rate for the adaptive decision boundary (applied on rest-like windows only)
-RECENTER_CLAMP = 2.0        # max drift of the neutral from its calibration seed, in log-odds
-RECENTER_REST_CONF = 0.65   # windows below this recentered confidence are 'rest' and update the neutral
+CONF_FLOOR = 0.85
+RECENTER_ALPHA = 0.01
+RECENTER_CLAMP = 2.0
+RECENTER_REST_CONF = 0.65
 TARGET_MAPPINGS = {
     'left_hand/task':  1,
     'right_hand/task': 2,
