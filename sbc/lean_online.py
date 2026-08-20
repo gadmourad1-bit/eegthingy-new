@@ -24,8 +24,8 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..")))   # repo root, for config.py (dev + build)
-from config import (CONF_FLOOR, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF,
-                    WS_HOST, WS_PORT, SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL)
+from config import (CONF_FLOOR, RECENTER_ADAPTIVE, RECENTER_ALPHA, RECENTER_CLAMP,
+                    RECENTER_REST_CONF, WS_HOST, WS_PORT, SMOOTHER_N, SMOOTHER_M, SMOOTHER_DWELL)
 from ws import WebSocket
 from smoother import Smoother
 
@@ -46,7 +46,9 @@ class BoundaryRecenter:
     seed. Decisions and confidence use the recentered margin z = s - center; gating that
     at CONF_FLOOR gives a rest dead-zone for free."""
 
-    def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
+    def __init__(self, adaptive=RECENTER_ADAPTIVE, alpha=RECENTER_ALPHA,
+                 clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
+        self.adaptive = adaptive
         self.alpha = alpha
         self.clamp = clamp
         self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
@@ -60,9 +62,9 @@ class BoundaryRecenter:
         return self
 
     def update(self, s):
-        """Track the neutral from rest-like windows only, clamped to seed +/- clamp;
-        return the recentered margin z = s - center."""
-        if abs(s - self.center) < self.rest_margin:
+        """Track the neutral from rest-like windows only, clamped to seed +/- clamp
+        (skipped entirely when frozen); return the recentered margin z = s - center."""
+        if self.adaptive and abs(s - self.center) < self.rest_margin:
             self.center += self.alpha * (s - self.center)
             lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
             self.center = min(hi, max(lo, self.center))

@@ -14,7 +14,7 @@ from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
                     EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
                     STRIDE_S, CALIBRATION_SECONDS, TARGET_MAPPINGS, CONF_FLOOR,
-                    RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
+                    RECENTER_ADAPTIVE, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -272,9 +272,13 @@ class BoundaryRecenter:
     clamped near the seed so it can't run away. Decisions and confidence are taken on
     the recentered margin z = s - center; gating that at CONF_FLOOR gives a rest
     dead-zone for free (idle sits near the boundary -> low confidence -> no commit).
+    RECENTER_ADAPTIVE=False freezes the center at its calibration seed (no live
+    feedback loop); the seed and the recentered decisions still apply.
     """
 
-    def __init__(self, alpha=RECENTER_ALPHA, clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
+    def __init__(self, adaptive=RECENTER_ADAPTIVE, alpha=RECENTER_ALPHA,
+                 clamp=RECENTER_CLAMP, rest_conf=RECENTER_REST_CONF):
+        self.adaptive = adaptive
         self.alpha = alpha
         self.clamp = clamp
         self.rest_margin = float(np.log(rest_conf / (1.0 - rest_conf)))  # |z| below this = rest-like
@@ -288,9 +292,9 @@ class BoundaryRecenter:
         return self
 
     def update(self, s):
-        """Track the neutral from rest-like windows only, clamped to seed +/- clamp;
-        return the recentered margin z = s - center."""
-        if abs(s - self.center) < self.rest_margin:
+        """Track the neutral from rest-like windows only, clamped to seed +/- clamp
+        (skipped entirely when frozen); return the recentered margin z = s - center."""
+        if self.adaptive and abs(s - self.center) < self.rest_margin:
             self.center += self.alpha * (s - self.center)
             lo, hi = self.seed_center - self.clamp, self.seed_center + self.clamp
             self.center = min(hi, max(lo, self.center))
@@ -579,7 +583,8 @@ def run_online(headless=False):
         pcal = clf.predict_proba(X_cal)
         scal = np.log(np.clip(pcal[:, 1], 1e-9, 1.0) / np.clip(pcal[:, 0], 1e-9, 1.0))
         recenter.seed(scal)
-        print(f"aligned on {len(X_cal)} windows (boundary center={recenter.center:+.2f})")
+        mode = "adaptive" if recenter.adaptive else "FROZEN at calibration"
+        print(f"aligned on {len(X_cal)} windows (boundary center={recenter.center:+.2f}, {mode})")
     else:
         print("calibration produced too little data; using pooled training reference, center=0.")
 
