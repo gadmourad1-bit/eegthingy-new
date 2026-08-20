@@ -1,0 +1,3 @@
+# Preserve checksummed release artifacts byte-for-byte across Git checkouts.
+results/common_grid_v6/analysis/*.csv binary
+output/pdf/*.pdf binary

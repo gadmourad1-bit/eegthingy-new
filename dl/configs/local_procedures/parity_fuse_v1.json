@@ -1,0 +1,28 @@
+{
+  "architecture": {
+    "dynamics_channels": 24,
+    "dynamics_kernel": 15,
+    "fusion_dim": 32,
+    "gate_hidden": 24,
+    "raw_dim": 40,
+    "tangent_band_dim": 12,
+    "tangent_dim": 32,
+    "tangent_hidden": 24,
+    "temporal_filters": 16,
+    "temporal_kernel": 31
+  },
+  "model": "architecture.parity_fuse",
+  "schema": "eeg-mi-local-procedure-config-v2",
+  "training": {
+    "batch_size": 64,
+    "deterministic": true,
+    "epochs": 240,
+    "gradient_clip": 5.0,
+    "learning_rate": 0.0008,
+    "min_delta": 0.0001,
+    "patience": 40,
+    "residual_penalty": 0.01,
+    "weight_decay": 0.0006
+  },
+  "version": 1
+}

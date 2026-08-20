@@ -1,0 +1,38 @@
+{
+  "architecture": {
+    "dynamics_channels": 16,
+    "dynamics_kernel": 15,
+    "gate_hidden": 16,
+    "normalization": "batch",
+    "orientation_hidden": 12,
+    "orientation_rank": 8,
+    "pool_kernel": 75,
+    "pool_stride": 15,
+    "temporal_filters": 32,
+    "temporal_kernel": 25
+  },
+  "model": "architecture.orbit_v3",
+  "schema": "eeg-mi-local-procedure-config-v2",
+  "training": {
+    "batch_size": 64,
+    "candidate_names": [
+      "fused",
+      "anchor",
+      "raw_mean",
+      "uniform",
+      "energy",
+      "dynamics"
+    ],
+    "deterministic": true,
+    "epochs": 240,
+    "gradient_clip": 5.0,
+    "learning_rate": 0.0007,
+    "min_delta": 0.0001,
+    "orientation_penalty": 0.0,
+    "patience": 40,
+    "transport_auxiliary_weight": 0.35,
+    "view_auxiliary_weight": 0.25,
+    "weight_decay": 0.0005
+  },
+  "version": 1
+}

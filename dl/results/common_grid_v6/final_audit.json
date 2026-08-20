@@ -1,0 +1,90 @@
+{
+  "claim_tombstones": 0,
+  "complete": 96320,
+  "corrupt": 0,
+  "details": {
+    "claim_tombstone_paths": [],
+    "corrupt": {},
+    "extra_directories": [],
+    "failure_attempts": {},
+    "forensic_ledger": [
+      {
+        "artifact_sha256": "2dbd7ff73108b7ea3acf6ae3a7da5519e14aae5beacfcf8680570f50f4a0887b",
+        "category": "claims",
+        "identity": "job-085724d00ddf9209f2e8d9dd",
+        "path": "quarantine/claims/job-085724d00ddf9209f2e8d9dd.json.stale.20260805T003918.61717ee937",
+        "reason": "stale"
+      },
+      {
+        "artifact_sha256": "4d87d1181bd331fd2779e23ccbef61b8b7d84dbc7c88e8611f91bb93fe6d619a",
+        "category": "claims",
+        "identity": "job-6dc79ea85ac058019411809f",
+        "path": "quarantine/claims/job-6dc79ea85ac058019411809f.json.stale.20260805T004300.fa98731740",
+        "reason": "stale"
+      },
+      {
+        "artifact_sha256": "4e2160bed180b2705fda5fe44fc2a4249227deb86f184860b79a09a6ed5c5fec",
+        "category": "claims",
+        "identity": "job-9a35dec3e32de8dfb221db55",
+        "path": "quarantine/claims/job-9a35dec3e32de8dfb221db55.json.stale.20260806T231233.d3a1f3449f",
+        "reason": "stale"
+      },
+      {
+        "artifact_sha256": "09a6f999587cd02edfbc8d0b5d69d7d10c44aee2068fd8cdae68fd97258a69d2",
+        "category": "claims",
+        "identity": "job-a4ff305a6d1bbfd0563bee24",
+        "path": "quarantine/claims/job-a4ff305a6d1bbfd0563bee24.json.stale.20260806T225900.3b9f0c0d15",
+        "reason": "stale"
+      },
+      {
+        "artifact_sha256": "5464c805c596d30717360d1a217b47990b004e30b25dd9edc80e0acbc781b38a",
+        "category": "claims",
+        "identity": "job-b5b5c72ff371d5ceea9da570",
+        "path": "quarantine/claims/job-b5b5c72ff371d5ceea9da570.json.stale.20260804T234840.08c0f78369",
+        "reason": "stale"
+      },
+      {
+        "artifact_sha256": "adfed57ac32d2af1eca8220f1d2f1e2133c0572b9d1760d9f160983954f84864",
+        "category": "claims",
+        "identity": "job-bc21642f4b427caf336884f4",
+        "path": "quarantine/claims/job-bc21642f4b427caf336884f4.json.stale.20260806T230640.8433503272",
+        "reason": "stale"
+      }
+    ],
+    "live_claim_job_ids": [],
+    "missing_job_ids": [],
+    "partial_paths": [],
+    "quarantine_artifact_paths": [
+      "quarantine/claims/job-085724d00ddf9209f2e8d9dd.json.stale.20260805T003918.61717ee937",
+      "quarantine/claims/job-6dc79ea85ac058019411809f.json.stale.20260805T004300.fa98731740",
+      "quarantine/claims/job-9a35dec3e32de8dfb221db55.json.stale.20260806T231233.d3a1f3449f",
+      "quarantine/claims/job-a4ff305a6d1bbfd0563bee24.json.stale.20260806T225900.3b9f0c0d15",
+      "quarantine/claims/job-b5b5c72ff371d5ceea9da570.json.stale.20260804T234840.08c0f78369",
+      "quarantine/claims/job-bc21642f4b427caf336884f4.json.stale.20260806T230640.8433503272"
+    ],
+    "stale_claim_job_ids": [],
+    "unexpected_record_paths": [],
+    "unexpected_root_entries": [],
+    "unknown_claim_paths": [],
+    "unsafe_paths": []
+  },
+  "exact_cartesian_complete": true,
+  "expected": 96320,
+  "extra": 0,
+  "failed_jobs": 0,
+  "forensic_ledger_sha256": "962531ea433232d90d9869a2d78529f2e867cd7373b883dd78e8cf01ca31f626",
+  "invalid_forensic_artifacts": 0,
+  "live_claims": 0,
+  "missing": 0,
+  "partials": 0,
+  "plan_sha256": "65b93b7e5d09cfc30fb6ce28156368e66aec1503f4efa37faa3189e25ebbc3b1",
+  "preflight_attestation_valid": true,
+  "preflight_report_sha256": "e9fe4b055ec4bd8171042492ba2832c22a083c1347ec244312ce331442df7a4f",
+  "quarantine_artifacts": 6,
+  "resolved_forensic_artifacts": 6,
+  "schema": "eeg-mi-score-blind-common-grid-audit-v3",
+  "stale_claims": 0,
+  "unexpected_root_entries": 0,
+  "unknown_claims": 0,
+  "unsafe_paths": 0
+}
