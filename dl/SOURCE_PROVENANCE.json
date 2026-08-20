@@ -1,7 +1,7 @@
 {
   "destination_root": ".",
   "destination_root_semantics": "directory containing SOURCE_PROVENANCE.json",
-  "generated_at_utc": "2026-08-20T04:11:11Z",
+  "generated_at_utc": "2026-08-20T05:12:44Z",
   "integrity": {
     "canonical_plan_sha256": "65b93b7e5d09cfc30fb6ce28156368e66aec1503f4efa37faa3189e25ebbc3b1",
     "reports_ledger_sha256": "6265d73a34e4d1a2c7ebf81c054054212907aeffe2fd7851efe2de4b57ac49aa",
@@ -168,7 +168,7 @@
       },
       {
         "path": "docs/LOCAL_PROCEDURE_CONFIGS.md",
-        "sha256": "9b1661af29d5524ad5fa1317d9274a4ed18ea2bbf8e07aacf830bdcf7c7e3c9e",
+        "sha256": "e518a8cbbf9cabd766ba6345949d189d85ac9a2af79123515999958a8a1a3cca",
         "size": 4060
       },
       {
@@ -193,7 +193,7 @@
       },
       {
         "path": "docs/ORBIT_CONFIG_PROVENANCE.md",
-        "sha256": "89ad898230c9dba953c866bae45783b5db0723261f50fb0bb462324661209f99",
+        "sha256": "41500d9dc8003daee7afa10aea97ecef51dcda3a18b3f67d46425440342e19d8",
         "size": 6388
       },
       {
@@ -423,8 +423,8 @@
       },
       {
         "path": "scripts/_common.sh",
-        "sha256": "e7c01cbdcb64d12f1b15713a69332e73556686a969ac02a57b67de8cfb47e793",
-        "size": 4896
+        "sha256": "4155c24244cc6706e24ed540013b6f53d76dfb53e06461be17247e22bccb4dc8",
+        "size": 5188
       },
       {
         "path": "scripts/analyze_common_grid.sh",
@@ -653,8 +653,8 @@
       },
       {
         "path": "src/benchmark/full_grid.py",
-        "sha256": "f20d7164110ff4c687cbb04f26727c6e51ea0fa0be10e8e49c0c418913bda0bd",
-        "size": 366001
+        "sha256": "fb3c807d3ae109b1526b49e5f2b9ef8599f83cb801f6f3ff8cb15567dc3b720a",
+        "size": 366020
       },
       {
         "path": "src/benchmark/full_grid_analysis.py",
@@ -718,13 +718,13 @@
       },
       {
         "path": "src/benchmark/local_model_tournament.py",
-        "sha256": "73019f5eb63018ea6e521a34b93f5c50ab6b56d138169c8645501bc7f9dc510d",
-        "size": 39376
+        "sha256": "d7084564e1a8b9c0724b8de3225247d57be935f968a1c518590a8453e98ad6e1",
+        "size": 39373
       },
       {
         "path": "src/benchmark/local_outer_refit_benchmark.py",
-        "sha256": "986d5076dcfd18bb01aacf6e96b9eaae8d1ac3c8697de743d3c75684fafea557",
-        "size": 55182
+        "sha256": "8d66ce6de0885f6f0f184813ee8b487ef953ada6bdd4ccd0d42d82467c463531",
+        "size": 55183
       },
       {
         "path": "src/benchmark/model_registry.py",
@@ -798,7 +798,7 @@
       },
       {
         "path": "src/benchmark/procedure_grid.py",
-        "sha256": "38375901edbdf31b5f2ecd2c3b94ac85b66dbcfb300f372a3cd0e012713cb71d",
+        "sha256": "b84e49c918646f8c18a22f5b29d52ffbf9f9588c0f147e130fce94369ceb5f73",
         "size": 232050
       },
       {
@@ -1298,8 +1298,8 @@
       },
       {
         "path": "tests/core/test_full_grid.py",
-        "sha256": "3f482a952808e599bdce5b4437050d5e3b604f324d1abc013f76f2c18d3b27eb",
-        "size": 136800
+        "sha256": "85e534841588c9dc4dbe402fd5de88ccbda12d38e1e141434b7e8bc0f4bf493d",
+        "size": 137538
       },
       {
         "path": "tests/core/test_full_grid_analysis.py",
@@ -1323,7 +1323,7 @@
       },
       {
         "path": "tests/core/test_geoadapt_v2.py",
-        "sha256": "7f31cad634dbc564e22418c75b3ebbc23133b22a13e05d67e9a046180e2e892b",
+        "sha256": "8bfc527f704668e25b0ddcf06f5276b9418b298d0de203db55ffab6c8bb01b1b",
         "size": 121210
       },
       {
@@ -1333,8 +1333,8 @@
       },
       {
         "path": "tests/core/test_hemiq_v2_grid.py",
-        "sha256": "86996360bd4aaf31fe7ae15733b6d0c7b4490a168be84a74cb1e9fc7ac5557cf",
-        "size": 113715
+        "sha256": "79f0618e65795b21896e89825fc7771ff7f41a2ab5087777d3b86dc20f449b38",
+        "size": 113710
       },
       {
         "path": "tests/core/test_hemiq_v2_model.py",
@@ -1358,7 +1358,7 @@
       },
       {
         "path": "tests/core/test_local_outer_refit_benchmark.py",
-        "sha256": "8af89dee03ec52fcacd45ddfdf42f489c6372397637a74f8df51cfea41d494aa",
+        "sha256": "a6632130baab4442d3360d1bb62457b858a841600273ae7fd13805ddc864f8b5",
         "size": 24870
       },
       {
@@ -1423,7 +1423,7 @@
       },
       {
         "path": "tests/core/test_procedure_grid.py",
-        "sha256": "1b2813b0bd344fd29d487f757db7e00a2a4f0eba54c36af0b21a58c53db63053",
+        "sha256": "b038fd0635bde89001e6b0d1630cd57144a1a2b8a884cac3342896a821434ab9",
         "size": 68473
       },
       {
@@ -1448,8 +1448,8 @@
       },
       {
         "path": "tests/core/test_robustness_analysis.py",
-        "sha256": "cd1de44cc794be4dfa6512723e09a2317904c98c79dabb98ba90cac96d1edc9d",
-        "size": 11413
+        "sha256": "568f6769eaf57f87a579b127885d20741b625ab9744efcee5cdf69cb4116e291",
+        "size": 11408
       },
       {
         "path": "tests/core/test_robustness_screen.py",

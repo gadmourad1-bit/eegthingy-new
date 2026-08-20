@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import errno
 import hashlib
+import importlib
 import inspect
 import json
 import math
@@ -22,6 +23,26 @@ import numpy as np
 import pytest
 
 from benchmark import full_grid, project_gpu_leases
+
+
+def test_formal_source_files_exist_in_src_layout() -> None:
+    package_root = Path(full_grid.__file__).resolve().parent
+    assert "runner.py" in full_grid.SOURCE_FILES
+    assert "benchmark.py" not in full_grid.SOURCE_FILES
+    assert all((package_root / name).is_file() for name in full_grid.SOURCE_FILES)
+
+
+def test_worker_lazy_imports_use_src_layout_module_names() -> None:
+    assert full_grid.WORKER_LAZY_IMPORT_MODULES == (
+        "runner",
+        "baselines",
+        "models",
+        "training",
+        "data",
+    )
+    assert "benchmark" not in full_grid.WORKER_LAZY_IMPORT_MODULES
+    for module_name in full_grid.WORKER_LAZY_IMPORT_MODULES:
+        importlib.import_module(f"benchmark.{module_name}")
 
 
 def _partition(rows: list[int]) -> dict[str, Any]:

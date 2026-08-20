@@ -149,36 +149,36 @@ PROCEDURES: tuple[ProcedureSpec, ...] = (
         key="cameo",
         stable_id="architecture.cameo",
         config_path="configs/local_procedures/cameo_v1.json",
-        config_bytes=830,
+        config_bytes=829,
         config_sha256=(
-            "23d07dcfc03bac8ac1e0cb076621850d5738df5a7d31fa7ea89ba42b3dfb2336"
+            "e21d87705155f630be58f108a6cb80d5db2c7d59553459b0d638c24aeb321db6"
         ),
     ),
     ProcedureSpec(
         key="hemiparity",
         stable_id="architecture.hemiparity",
         config_path="configs/local_procedures/hemiparity_v1.json",
-        config_bytes=570,
+        config_bytes=569,
         config_sha256=(
-            "0978f53bbc603378052d4ea97355641fe454d250f2745593ead239df4eb463cc"
+            "8f4c5cef14e4a0edc782c350e06de33a661d7205016d995adecf09595ec9898f"
         ),
     ),
     ProcedureSpec(
         key="parity_fuse",
         stable_id="architecture.parity_fuse",
         config_path="configs/local_procedures/parity_fuse_v1.json",
-        config_bytes=629,
+        config_bytes=628,
         config_sha256=(
-            "c5a2e84163b49f2da7c47c359418aa790f7a9d6490c7e0bc48c9aa8be3f9c6fb"
+            "c2c45117d3aa9448ad715732f0c9f370ee96653944b0a76efefc72f317ae3bbc"
         ),
     ),
     ProcedureSpec(
         key="orbit_v3",
         stable_id="architecture.orbit_v3",
         config_path="configs/local_procedures/orbit_v3.json",
-        config_bytes=849,
+        config_bytes=848,
         config_sha256=(
-            "95edd8a374892e4f28a8feb4e3dfe4ffb32e415b4c3cca2d1ea4a6f89a72b456"
+            "aed0c4303a6dcd046dc49b233dee3a2fc926859d42382506e8b823d3e195e806"
         ),
     ),
 )

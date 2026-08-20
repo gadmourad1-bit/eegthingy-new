@@ -1,0 +1,31 @@
+Dear Editor:
+
+We submit "An End-to-End Motor-Imagery Brain–Computer Interface: From Low-Cost
+Acquisition and Deployed Classical Decoding to a Reproducible Benchmark of
+Compact Coordinate-Field Networks" for consideration as a Regular Paper in
+TBME.
+
+The manuscript documents a complete motor-imagery BCI chain: a 16-channel
+consumer-grade acquisition rig with scripted cue presentation, an online
+pipeline combining aligned classical decoders with unsupervised in-context
+calibration and temporal evidence gating (91% within-participant and 86%
+participant-independent accuracy on the local cohort, with completed pilot
+closed-loop navigation), and an exactly audited 96,320-job benchmark of 43
+neural configurations across four public cohorts and one local cohort. Its
+innovation is twofold: coordinate-field networks that parameterize spatial
+weights over electrode coordinates rather than channel indices, whose compact
+continuations were within descriptive uncertainty of a recent transformer
+comparator (TCFormer) at 42% and 18% of its parameters and an order of
+magnitude lower latency; and a fully reproducible,
+participant-aware evaluation procedure with frozen seeds and per-job audit.
+The work is significant for biomedical engineering because it demonstrates an
+auditable, resource-realistic path from electrode to assistive command. The
+manuscript reports observed rankings as development evidence with explicit
+uncertainty, not as proof of global superiority or clinical benefit.
+
+[TODO - ALL AUTHORS MUST CONFIRM: originality, no duplicate submission, and
+disclosure of the companion closed-loop manuscript and any preprints.]
+
+Sincerely,
+
+[TODO: corresponding author name, degree, affiliation, and email]

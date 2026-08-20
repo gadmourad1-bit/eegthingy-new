@@ -15,7 +15,7 @@ Only `architecture.orbit_v3` has an exact outcome-free configuration file:
 
 | Path | Bytes | SHA-256 |
 |---|---:|---|
-| `configs/local_procedures/orbit_v3.json` | 849 | `95edd8a374892e4f28a8feb4e3dfe4ffb32e415b4c3cca2d1ea4a6f89a72b456` |
+| `configs/local_procedures/orbit_v3.json` | 848 | `aed0c4303a6dcd046dc49b233dee3a2fc926859d42382506e8b823d3e195e806` |
 
 ORBIT-v1/v2/v4/v5 remain **blocked historical/post-hoc variants** in the
 harmonized-v2 procedure runner. Their stable IDs are real registry entries and

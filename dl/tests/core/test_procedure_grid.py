@@ -1038,7 +1038,7 @@ def test_execute_job_uses_source_only_reset_then_one_test_call(
         "version": 1,
         "model": "architecture.cameo",
         "config_file": "configs/local_procedures/cameo_v1.json",
-        "config_file_bytes": 830,
+        "config_file_bytes": 829,
         "config_file_sha256": (
             procedure_grid.PROCEDURE_BY_ID["architecture.cameo"].config_sha256
         ),

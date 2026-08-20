@@ -1,0 +1,957 @@
+{
+  "confirmation_evidence": false,
+  "estimand": {
+    "aggregation": "folds concatenated within subject-seed; seeds averaged within subject; subjects averaged within dataset; five datasets weighted equally",
+    "datasets": [
+      "local_exp4",
+      "bnci2014_001",
+      "bnci2014_004",
+      "cho2017",
+      "physionet_mi"
+    ],
+    "metric": "balanced_accuracy",
+    "models_in_common_grid": 43,
+    "subjects_total": 132
+  },
+  "evidence_scope": "opened-development common-grid results only",
+  "exploratory_sign_flip_maxT": {
+    "batch_size": 2000,
+    "family": "all non-TCFormer model-minus-TCFormer comparisons",
+    "family_size": 42,
+    "generator": "NumPy PCG64",
+    "method": "paired subject-level shared-sign maximum-difference test",
+    "p_value_correction": "add-one Monte Carlo correction",
+    "resamples": 100000,
+    "results": [
+      {
+        "balanced_accuracy_difference": 0.00673689804559371,
+        "comparator": "tcformer",
+        "difference_statistic": 0.00673689804559371,
+        "model": "cardinal_fbc_compactdyn_scale025_extended",
+        "one_sided_maxT_adjusted_p_value": 0.7723022769772302,
+        "one_sided_raw_p_value": 0.15247847521524785,
+        "stratified_se": 0.0063172121241277645
+      },
+      {
+        "balanced_accuracy_difference": 0.004407537202464734,
+        "comparator": "tcformer",
+        "difference_statistic": 0.004407537202464734,
+        "model": "cardinal_fbc_compactdyn_extended",
+        "one_sided_maxT_adjusted_p_value": 0.8519114808851912,
+        "one_sided_raw_p_value": 0.23937760622393775,
+        "stratified_se": 0.005881388317831907
+      },
+      {
+        "balanced_accuracy_difference": 0.0035104487970430143,
+        "comparator": "tcformer",
+        "difference_statistic": 0.0035104487970430143,
+        "model": "cardinal_dynamics_sinc_extended",
+        "one_sided_maxT_adjusted_p_value": 0.8781612183878161,
+        "one_sided_raw_p_value": 0.2878771212287877,
+        "stratified_se": 0.006200469771710524
+      },
+      {
+        "balanced_accuracy_difference": 0.00315062645352503,
+        "comparator": "tcformer",
+        "difference_statistic": 0.00315062645352503,
+        "model": "cardinal_dynamics_extended",
+        "one_sided_maxT_adjusted_p_value": 0.8879411205887942,
+        "one_sided_raw_p_value": 0.3179668203317967,
+        "stratified_se": 0.006611544231594757
+      },
+      {
+        "balanced_accuracy_difference": 0.0022184455506919234,
+        "comparator": "tcformer",
+        "difference_statistic": 0.0022184455506919234,
+        "model": "cardinal_fbc_compactdyn_scale010_extended",
+        "one_sided_maxT_adjusted_p_value": 0.9110608893911061,
+        "one_sided_raw_p_value": 0.3622063779362206,
+        "stratified_se": 0.006100120597433195
+      },
+      {
+        "balanced_accuracy_difference": 0.002186396359947094,
+        "comparator": "tcformer",
+        "difference_statistic": 0.002186396359947094,
+        "model": "cardinal_fbc_physical_extended",
+        "one_sided_maxT_adjusted_p_value": 0.9118708812911871,
+        "one_sided_raw_p_value": 0.36184638153618465,
+        "stratified_se": 0.005973862307576903
+      },
+      {
+        "balanced_accuracy_difference": 0.0014790276685204538,
+        "comparator": "tcformer",
+        "difference_statistic": 0.0014790276685204538,
+        "model": "cardinal_fbc_compactdyn",
+        "one_sided_maxT_adjusted_p_value": 0.9271107288927111,
+        "one_sided_raw_p_value": 0.4111858881411186,
+        "stratified_se": 0.006041204902261428
+      },
+      {
+        "balanced_accuracy_difference": 0.0010412129738216716,
+        "comparator": "tcformer",
+        "difference_statistic": 0.0010412129738216716,
+        "model": "cardinal_fbc_compactdyn_scale025",
+        "one_sided_maxT_adjusted_p_value": 0.9352806471935281,
+        "one_sided_raw_p_value": 0.43436565634343655,
+        "stratified_se": 0.005828192454371212
+      },
+      {
+        "balanced_accuracy_difference": 0.0004884849986299328,
+        "comparator": "tcformer",
+        "difference_statistic": 0.0004884849986299328,
+        "model": "cardinal_fbms_extended",
+        "one_sided_maxT_adjusted_p_value": 0.9452705472945271,
+        "one_sided_raw_p_value": 0.46721532784672154,
+        "stratified_se": 0.006142072394753782
+      },
+      {
+        "balanced_accuracy_difference": 1.721226974852469e-05,
+        "comparator": "tcformer",
+        "difference_statistic": 1.721226974852469e-05,
+        "model": "cardinal_dynamics_compact",
+        "one_sided_maxT_adjusted_p_value": 0.952660473395266,
+        "one_sided_raw_p_value": 0.5003749962500375,
+        "stratified_se": 0.0056786424529863865
+      },
+      {
+        "balanced_accuracy_difference": 1.0033538656727472e-05,
+        "comparator": "tcformer",
+        "difference_statistic": 1.0033538656727472e-05,
+        "model": "fbmsnet",
+        "one_sided_maxT_adjusted_p_value": 0.9527404725952741,
+        "one_sided_raw_p_value": 0.4986350136498635,
+        "stratified_se": 0.006262220511960883
+      },
+      {
+        "balanced_accuracy_difference": -0.00014666549231765765,
+        "comparator": "tcformer",
+        "difference_statistic": -0.00014666549231765765,
+        "model": "cardinal_fbc_corr_extended",
+        "one_sided_maxT_adjusted_p_value": 0.954980450195498,
+        "one_sided_raw_p_value": 0.5110548894511054,
+        "stratified_se": 0.005742353631092144
+      },
+      {
+        "balanced_accuracy_difference": -0.00024609314464385144,
+        "comparator": "tcformer",
+        "difference_statistic": -0.00024609314464385144,
+        "model": "cardinal_fbc_micro",
+        "one_sided_maxT_adjusted_p_value": 0.956310436895631,
+        "one_sided_raw_p_value": 0.5152648473515264,
+        "stratified_se": 0.006083517362737513
+      },
+      {
+        "balanced_accuracy_difference": -0.0003784665415100228,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0003784665415100228,
+        "model": "cardinal_fbc_micro_extended",
+        "one_sided_maxT_adjusted_p_value": 0.9582104178958211,
+        "one_sided_raw_p_value": 0.5258747412525875,
+        "stratified_se": 0.0059370646696668816
+      },
+      {
+        "balanced_accuracy_difference": -0.0003814960535974868,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0003814960535974868,
+        "model": "cardinal_dynamics",
+        "one_sided_maxT_adjusted_p_value": 0.9582704172958271,
+        "one_sided_raw_p_value": 0.5237247627523725,
+        "stratified_se": 0.006290502391850413
+      },
+      {
+        "balanced_accuracy_difference": -0.0006940298831603176,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0006940298831603176,
+        "model": "cardinal_fbc_physical",
+        "one_sided_maxT_adjusted_p_value": 0.962530374696253,
+        "one_sided_raw_p_value": 0.5445545544544554,
+        "stratified_se": 0.006220577527128247
+      },
+      {
+        "balanced_accuracy_difference": -0.0010086964163051114,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0010086964163051114,
+        "model": "cardinal_fbc_extended",
+        "one_sided_maxT_adjusted_p_value": 0.966330336696633,
+        "one_sided_raw_p_value": 0.5637243627563724,
+        "stratified_se": 0.006249431629817902
+      },
+      {
+        "balanced_accuracy_difference": -0.001111580086580072,
+        "comparator": "tcformer",
+        "difference_statistic": -0.001111580086580072,
+        "model": "fbcnet",
+        "one_sided_maxT_adjusted_p_value": 0.967460325396746,
+        "one_sided_raw_p_value": 0.5701542984570155,
+        "stratified_se": 0.006254241905691369
+      },
+      {
+        "balanced_accuracy_difference": -0.001153447170113834,
+        "comparator": "tcformer",
+        "difference_statistic": -0.001153447170113834,
+        "model": "cardinal_fbc",
+        "one_sided_maxT_adjusted_p_value": 0.9680003199968,
+        "one_sided_raw_p_value": 0.5746142538574615,
+        "stratified_se": 0.0059901378790181
+      },
+      {
+        "balanced_accuracy_difference": -0.0018747437211205323,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0018747437211205323,
+        "model": "cardinal_fbc_corr",
+        "one_sided_maxT_adjusted_p_value": 0.976080239197608,
+        "one_sided_raw_p_value": 0.6160538394616054,
+        "stratified_se": 0.006033133549925396
+      },
+      {
+        "balanced_accuracy_difference": -0.002015546369894195,
+        "comparator": "tcformer",
+        "difference_statistic": -0.002015546369894195,
+        "model": "cardinal_fbc_compactdyn_scale010",
+        "one_sided_maxT_adjusted_p_value": 0.97740022599774,
+        "one_sided_raw_p_value": 0.6263837361626384,
+        "stratified_se": 0.00597142229893449
+      },
+      {
+        "balanced_accuracy_difference": -0.0034065857920930302,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0034065857920930302,
+        "model": "cardinal_fbms",
+        "one_sided_maxT_adjusted_p_value": 0.987120128798712,
+        "one_sided_raw_p_value": 0.7064929350706493,
+        "stratified_se": 0.006085751640073214
+      },
+      {
+        "balanced_accuracy_difference": -0.0050405876195731125,
+        "comparator": "tcformer",
+        "difference_statistic": -0.0050405876195731125,
+        "model": "cardinal_dynamics_sinc_residual",
+        "one_sided_maxT_adjusted_p_value": 0.993920060799392,
+        "one_sided_raw_p_value": 0.7844321556784433,
+        "stratified_se": 0.00570205693624104
+      },
+      {
+        "balanced_accuracy_difference": -0.008999133367973929,
+        "comparator": "tcformer",
+        "difference_statistic": -0.008999133367973929,
+        "model": "cardinal_dynamics_sinc",
+        "one_sided_maxT_adjusted_p_value": 0.999540004599954,
+        "one_sided_raw_p_value": 0.9201707982920171,
+        "stratified_se": 0.005752270210483495
+      },
+      {
+        "balanced_accuracy_difference": -0.011930225571529913,
+        "comparator": "tcformer",
+        "difference_statistic": -0.011930225571529913,
+        "model": "free_cardinal",
+        "one_sided_maxT_adjusted_p_value": 0.999980000199998,
+        "one_sided_raw_p_value": 0.964610353896461,
+        "stratified_se": 0.0063338124907188105
+      },
+      {
+        "balanced_accuracy_difference": -0.01705777230016359,
+        "comparator": "tcformer",
+        "difference_statistic": -0.01705777230016359,
+        "model": "cardinal_mix_drop",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 0.9565404345956541,
+        "stratified_se": 0.009352389050286309
+      },
+      {
+        "balanced_accuracy_difference": -0.02167354906231717,
+        "comparator": "tcformer",
+        "difference_statistic": -0.02167354906231717,
+        "model": "cardinal_mix",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 0.991730082699173,
+        "stratified_se": 0.008710793798192147
+      },
+      {
+        "balanced_accuracy_difference": -0.02261697701117991,
+        "comparator": "tcformer",
+        "difference_statistic": -0.02261697701117991,
+        "model": "shallow",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 0.999810001899981,
+        "stratified_se": 0.005203511851739959
+      },
+      {
+        "balanced_accuracy_difference": -0.023673524838017605,
+        "comparator": "tcformer",
+        "difference_statistic": -0.023673524838017605,
+        "model": "cardinal",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 0.997430025699743,
+        "stratified_se": 0.007407837859531221
+      },
+      {
+        "balanced_accuracy_difference": -0.029217305292667594,
+        "comparator": "tcformer",
+        "difference_statistic": -0.029217305292667594,
+        "model": "eegconformer",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 0.999930000699993,
+        "stratified_se": 0.0062569832212790305
+      },
+      {
+        "balanced_accuracy_difference": -0.03225292333806824,
+        "comparator": "tcformer",
+        "difference_statistic": -0.03225292333806824,
+        "model": "eegconformer_compact",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 0.999950000499995,
+        "stratified_se": 0.00602479322698104
+      },
+      {
+        "balanced_accuracy_difference": -0.033944508349943114,
+        "comparator": "tcformer",
+        "difference_statistic": -0.033944508349943114,
+        "model": "ctnet",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.008722582739252659
+      },
+      {
+        "balanced_accuracy_difference": -0.04146047463003984,
+        "comparator": "tcformer",
+        "difference_statistic": -0.04146047463003984,
+        "model": "atcnet",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.010071789283125878
+      },
+      {
+        "balanced_accuracy_difference": -0.043846144193970274,
+        "comparator": "tcformer",
+        "difference_statistic": -0.043846144193970274,
+        "model": "atcnet_aggressive_pool",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.007602388206379087
+      },
+      {
+        "balanced_accuracy_difference": -0.06599036769725174,
+        "comparator": "tcformer",
+        "difference_statistic": -0.06599036769725174,
+        "model": "ctnet_compact",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.00912901068555075
+      },
+      {
+        "balanced_accuracy_difference": -0.07716808580576694,
+        "comparator": "tcformer",
+        "difference_statistic": -0.07716808580576694,
+        "model": "eegsym_wide",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.008443711042399804
+      },
+      {
+        "balanced_accuracy_difference": -0.09208206708750187,
+        "comparator": "tcformer",
+        "difference_statistic": -0.09208206708750187,
+        "model": "free_scope",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.011169741460584661
+      },
+      {
+        "balanced_accuracy_difference": -0.09468290759160324,
+        "comparator": "tcformer",
+        "difference_statistic": -0.09468290759160324,
+        "model": "eegnet",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.015113132235860931
+      },
+      {
+        "balanced_accuracy_difference": -0.13191198927213418,
+        "comparator": "tcformer",
+        "difference_statistic": -0.13191198927213418,
+        "model": "eegtcnet",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.010230637180732083
+      },
+      {
+        "balanced_accuracy_difference": -0.13728735884351828,
+        "comparator": "tcformer",
+        "difference_statistic": -0.13728735884351828,
+        "model": "scope",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.012270036623574357
+      },
+      {
+        "balanced_accuracy_difference": -0.18403822322336813,
+        "comparator": "tcformer",
+        "difference_statistic": -0.18403822322336813,
+        "model": "deep4",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.018428068470239665
+      },
+      {
+        "balanced_accuracy_difference": -0.1975415867278186,
+        "comparator": "tcformer",
+        "difference_statistic": -0.1975415867278186,
+        "model": "eegsym",
+        "one_sided_maxT_adjusted_p_value": 1.0,
+        "one_sided_raw_p_value": 1.0,
+        "stratified_se": 0.01808542905471839
+      }
+    ],
+    "seed": 20260820,
+    "status": "exploratory and post hoc only; sign symmetry is assumed and all model selection used the same opened development suite",
+    "tail": "one-sided greater",
+    "test_statistic": "unstudentized equal-dataset balanced-accuracy difference"
+  },
+  "interpretation": "Descriptive fixed-protocol evidence; not independent confirmation, a clinical-performance claim, or a global state-of-the-art claim.",
+  "leader_pairwise_by_dataset_shared_bootstrap": {
+    "cardinal_dynamics_sinc_extended": {
+      "bnci2014_001": {
+        "balanced_accuracy_difference": 0.0444444444444444,
+        "shared_bootstrap_ci95": [
+          0.025308641975308688,
+          0.07060185185185164
+        ],
+        "shared_bootstrap_se": 0.011854187089125263,
+        "subjects": 9
+      },
+      "bnci2014_004": {
+        "balanced_accuracy_difference": -0.010386904761904736,
+        "shared_bootstrap_ci95": [
+          -0.027222222222222262,
+          0.0019642857142856407
+        ],
+        "shared_bootstrap_se": 0.007642034305879897,
+        "subjects": 9
+      },
+      "cho2017": {
+        "balanced_accuracy_difference": 0.02010897435897463,
+        "shared_bootstrap_ci95": [
+          0.00810256410256382,
+          0.03344230769230738
+        ],
+        "shared_bootstrap_se": 0.006464177606096606,
+        "subjects": 52
+      },
+      "local_exp4": {
+        "balanced_accuracy_difference": -0.00374999999999992,
+        "shared_bootstrap_ci95": [
+          -0.018333333333333424,
+          0.009999999999999898
+        ],
+        "shared_bootstrap_se": 0.007246577147486979,
+        "subjects": 8
+      },
+      "physionet_mi": {
+        "balanced_accuracy_difference": -0.034284267798760815,
+        "shared_bootstrap_ci95": [
+          -0.0572533924911643,
+          -0.012655095424570358
+        ],
+        "shared_bootstrap_se": 0.011392171185790785,
+        "subjects": 54
+      }
+    },
+    "cardinal_fbc": {
+      "bnci2014_001": {
+        "balanced_accuracy_difference": 0.004706790123456761,
+        "shared_bootstrap_ci95": [
+          -0.0014660493827161059,
+          0.010108024691358186
+        ],
+        "shared_bootstrap_se": 0.0029671384370358466,
+        "subjects": 9
+      },
+      "bnci2014_004": {
+        "balanced_accuracy_difference": 0.007400793650793713,
+        "shared_bootstrap_ci95": [
+          -0.010476438492063646,
+          0.02305555555555583
+        ],
+        "shared_bootstrap_se": 0.008624250396811327,
+        "subjects": 9
+      },
+      "cho2017": {
+        "balanced_accuracy_difference": 0.01708974358974391,
+        "shared_bootstrap_ci95": [
+          0.011964743589743532,
+          0.022435897435897252
+        ],
+        "shared_bootstrap_se": 0.00267386127543999,
+        "subjects": 52
+      },
+      "local_exp4": {
+        "balanced_accuracy_difference": 0.01416666666666666,
+        "shared_bootstrap_ci95": [
+          -0.001666666666666375,
+          0.029999999999999916
+        ],
+        "shared_bootstrap_se": 0.008067744742628166,
+        "subjects": 8
+      },
+      "physionet_mi": {
+        "balanced_accuracy_difference": -0.003912267952122961,
+        "shared_bootstrap_ci95": [
+          -0.009852021552655374,
+          0.001925414645070332
+        ],
+        "shared_bootstrap_se": 0.0030064433850759114,
+        "subjects": 54
+      }
+    },
+    "fbcnet": {
+      "bnci2014_001": {
+        "balanced_accuracy_difference": 0.009027777777777635,
+        "shared_bootstrap_ci95": [
+          0.005324074074074092,
+          0.012577160493827177
+        ],
+        "shared_bootstrap_se": 0.001865761278216022,
+        "subjects": 9
+      },
+      "bnci2014_004": {
+        "balanced_accuracy_difference": 0.01107142857142851,
+        "shared_bootstrap_ci95": [
+          -0.010565476190476208,
+          0.03298611111111127
+        ],
+        "shared_bootstrap_se": 0.011120420345358583,
+        "subjects": 9
+      },
+      "cho2017": {
+        "balanced_accuracy_difference": 0.01646474358974348,
+        "shared_bootstrap_ci95": [
+          0.011544871794871622,
+          0.02159935897435905
+        ],
+        "shared_bootstrap_se": 0.0025722589143407407,
+        "subjects": 52
+      },
+      "local_exp4": {
+        "balanced_accuracy_difference": 0.006249999999999867,
+        "shared_bootstrap_ci95": [
+          -0.0050000000000000044,
+          0.015416666666666634
+        ],
+        "shared_bootstrap_se": 0.005246756119927615,
+        "subjects": 8
+      },
+      "physionet_mi": {
+        "balanced_accuracy_difference": -0.003571559278080949,
+        "shared_bootstrap_ci95": [
+          -0.009456246165938178,
+          0.0022230195328023636
+        ],
+        "shared_bootstrap_se": 0.0029862443261897405,
+        "subjects": 54
+      }
+    },
+    "tcformer": {
+      "bnci2014_001": {
+        "balanced_accuracy_difference": 0.030787037037037,
+        "shared_bootstrap_ci95": [
+          0.0016184413580245752,
+          0.06589506172839521
+        ],
+        "shared_bootstrap_se": 0.016575054180294757,
+        "subjects": 9
+      },
+      "bnci2014_004": {
+        "balanced_accuracy_difference": -0.0007638888888887863,
+        "shared_bootstrap_ci95": [
+          -0.016944444444444318,
+          0.013541666666666785
+        ],
+        "shared_bootstrap_se": 0.007814321599754114,
+        "subjects": 9
+      },
+      "cho2017": {
+        "balanced_accuracy_difference": 0.01779807692307711,
+        "shared_bootstrap_ci95": [
+          0.005993589743589764,
+          0.030157131410256468
+        ],
+        "shared_bootstrap_se": 0.006151199937641407,
+        "subjects": 52
+      },
+      "local_exp4": {
+        "balanced_accuracy_difference": 0.0004166666666666208,
+        "shared_bootstrap_ci95": [
+          -0.03416666666666668,
+          0.04666666666666652
+        ],
+        "shared_bootstrap_se": 0.020971708484646516,
+        "subjects": 8
+      },
+      "physionet_mi": {
+        "balanced_accuracy_difference": -0.014553401509923458,
+        "shared_bootstrap_ci95": [
+          -0.03217846490264951,
+          0.0021152921990784503
+        ],
+        "shared_bootstrap_se": 0.008717507788993328,
+        "subjects": 54
+      }
+    }
+  },
+  "leader_pairwise_shared_bootstrap_comparisons": [
+    {
+      "balanced_accuracy_difference": 0.0032264492485505336,
+      "comparator": "cardinal_dynamics_sinc_extended",
+      "leader": "cardinal_fbc_compactdyn_scale025_extended",
+      "shared_bootstrap_ci95": [
+        -0.004721573037469662,
+        0.011479346831375812
+      ],
+      "shared_bootstrap_se": 0.004120468285867574,
+      "sign_flip_all42_maxT_adjusted_p_value": null,
+      "sign_flip_difference_statistic": null,
+      "sign_flip_one_sided_raw_p_value": null,
+      "sign_flip_stratified_se": null
+    },
+    {
+      "balanced_accuracy_difference": 0.007848478132173597,
+      "comparator": "fbcnet",
+      "leader": "cardinal_fbc_compactdyn_scale025_extended",
+      "shared_bootstrap_ci95": [
+        0.0027334031367184544,
+        0.012971058343830236
+      ],
+      "shared_bootstrap_se": 0.002610968994398562,
+      "sign_flip_all42_maxT_adjusted_p_value": null,
+      "sign_flip_difference_statistic": null,
+      "sign_flip_one_sided_raw_p_value": null,
+      "sign_flip_stratified_se": null
+    },
+    {
+      "balanced_accuracy_difference": 0.007890345215707528,
+      "comparator": "cardinal_fbc",
+      "leader": "cardinal_fbc_compactdyn_scale025_extended",
+      "shared_bootstrap_ci95": [
+        0.002773337499189002,
+        0.012831690760929883
+      ],
+      "shared_bootstrap_se": 0.0025652394163244007,
+      "sign_flip_all42_maxT_adjusted_p_value": null,
+      "sign_flip_difference_statistic": null,
+      "sign_flip_one_sided_raw_p_value": null,
+      "sign_flip_stratified_se": null
+    },
+    {
+      "balanced_accuracy_difference": 0.00673689804559352,
+      "comparator": "tcformer",
+      "leader": "cardinal_fbc_compactdyn_scale025_extended",
+      "shared_bootstrap_ci95": [
+        -0.004218946015404237,
+        0.01913490291914187
+      ],
+      "shared_bootstrap_se": 0.005967218135603364,
+      "sign_flip_all42_maxT_adjusted_p_value": 0.7723022769772302,
+      "sign_flip_difference_statistic": 0.00673689804559371,
+      "sign_flip_one_sided_raw_p_value": 0.15247847521524785,
+      "sign_flip_stratified_se": 0.0063172121241277645
+    }
+  ],
+  "runtime": {
+    "matplotlib": "3.10.9",
+    "numpy": "2.4.4",
+    "python": "3.12.13"
+  },
+  "schema": "tbme-manuscript-statistics-v4",
+  "sealed_tcformer_fixed_suite_context": {
+    "results": [
+      {
+        "balanced_accuracy_difference": 0.00673689804559371,
+        "bootstrap_resamples": 100000,
+        "bootstrap_seed": 20530729,
+        "comparator": "tcformer",
+        "descriptive_fixed_suite_bootstrap_interval95": [
+          -0.004272597383158972,
+          0.018992515952914492
+        ],
+        "model": "cardinal_fbc_compactdyn_scale025_extended",
+        "status": "descriptive model-minus-prespecified-TCFormer context only; intervals describe this opened development suite and are not confirmatory confidence intervals"
+      },
+      {
+        "balanced_accuracy_difference": 0.0035104487970430143,
+        "bootstrap_resamples": 100000,
+        "bootstrap_seed": 20350729,
+        "comparator": "tcformer",
+        "descriptive_fixed_suite_bootstrap_interval95": [
+          -0.00778386538649219,
+          0.015181723027710347
+        ],
+        "model": "cardinal_dynamics_sinc_extended",
+        "status": "descriptive model-minus-prespecified-TCFormer context only; intervals describe this opened development suite and are not confirmatory confidence intervals"
+      },
+      {
+        "balanced_accuracy_difference": -0.0011115800865800721,
+        "bootstrap_resamples": 100000,
+        "bootstrap_seed": 20430729,
+        "comparator": "tcformer",
+        "descriptive_fixed_suite_bootstrap_interval95": [
+          -0.01217957756749422,
+          0.010864476232972623
+        ],
+        "model": "fbcnet",
+        "status": "descriptive model-minus-prespecified-TCFormer context only; intervals describe this opened development suite and are not confirmatory confidence intervals"
+      },
+      {
+        "balanced_accuracy_difference": -0.001153447170113834,
+        "bootstrap_resamples": 100000,
+        "bootstrap_seed": 20440729,
+        "comparator": "tcformer",
+        "descriptive_fixed_suite_bootstrap_interval95": [
+          -0.012005176242504152,
+          0.010257888118993171
+        ],
+        "model": "cardinal_fbc",
+        "status": "descriptive model-minus-prespecified-TCFormer context only; intervals describe this opened development suite and are not confirmatory confidence intervals"
+      }
+    ],
+    "scope": "sealed descriptive model-minus-prespecified-TCFormer context for the fixed opened five-dataset suite",
+    "source_file": "dl/results/common_grid_v6/analysis/tcformer_overall_context.csv",
+    "source_sha256": "94dd7743bdefafa64a6874c132482c33e5278016369f5c69a06f4b1fc199c391"
+  },
+  "selected_models": [
+    {
+      "accuracy": 0.7402086182336182,
+      "accuracy_shared_bootstrap_ci95": [
+        0.7107106908831909,
+        0.7680612741373852
+      ],
+      "accuracy_shared_bootstrap_se": 0.014631146751030402,
+      "balanced_accuracy": 0.7398999919431077,
+      "balanced_accuracy_shared_bootstrap_ci95": [
+        0.7103927872194902,
+        0.7677597535512662
+      ],
+      "balanced_accuracy_shared_bootstrap_se": 0.014632789592831067,
+      "ece": 0.14285019820920947,
+      "ece_shared_bootstrap_ci95": [
+        0.1327487916702192,
+        0.15411825574381346
+      ],
+      "ece_shared_bootstrap_se": 0.005473382903472242,
+      "inference_ms_per_trial_median": 0.12095614802092314,
+      "job_total_seconds_median": 3.65969695802778,
+      "label": "Leader (31-anchor, x0.25)",
+      "model": "cardinal_fbc_compactdyn_scale025_extended",
+      "multiclass_brier": 0.369218564736612,
+      "multiclass_brier_shared_bootstrap_ci95": [
+        0.33477078597127974,
+        0.40567710870039225
+      ],
+      "multiclass_brier_shared_bootstrap_se": 0.018079356080674222,
+      "nll": 0.6260984543024102,
+      "nll_shared_bootstrap_ci95": [
+        0.5726156810123647,
+        0.6824386871964947
+      ],
+      "nll_shared_bootstrap_se": 0.027991365674347842,
+      "parameter_count_median": 32042,
+      "rank": 1,
+      "role": "leader"
+    },
+    {
+      "accuracy": 0.7367425993759327,
+      "accuracy_shared_bootstrap_ci95": [
+        0.7065509553486637,
+        0.7651245761825624
+      ],
+      "accuracy_shared_bootstrap_se": 0.014940457693058155,
+      "balanced_accuracy": 0.7366735426945572,
+      "balanced_accuracy_shared_bootstrap_ci95": [
+        0.7064687618007999,
+        0.7650294203766576
+      ],
+      "balanced_accuracy_shared_bootstrap_se": 0.01493714041940179,
+      "ece": 0.09084607217375135,
+      "ece_shared_bootstrap_ci95": [
+        0.0851859834333358,
+        0.0968133810162343
+      ],
+      "ece_shared_bootstrap_se": 0.0029713409249080306,
+      "inference_ms_per_trial_median": 0.05539811681956053,
+      "job_total_seconds_median": 2.1861993363127112,
+      "label": "Compact Sinc dynamics (31 anchors)",
+      "model": "cardinal_dynamics_sinc_extended",
+      "multiclass_brier": 0.32959453724169563,
+      "multiclass_brier_shared_bootstrap_ci95": [
+        0.2975770867904865,
+        0.3628169805695207
+      ],
+      "multiclass_brier_shared_bootstrap_se": 0.016647130329714186,
+      "nll": 0.5149064238141066,
+      "nll_shared_bootstrap_ci95": [
+        0.46513524446331034,
+        0.5664777373148574
+      ],
+      "nll_shared_bootstrap_se": 0.02585157891161855,
+      "parameter_count_median": 13523,
+      "rank": 3,
+      "role": "compact"
+    },
+    {
+      "accuracy": 0.7324030298919186,
+      "accuracy_shared_bootstrap_ci95": [
+        0.7036408844344955,
+        0.7595504391647446
+      ],
+      "accuracy_shared_bootstrap_se": 0.014230689862154455,
+      "balanced_accuracy": 0.7320515138109341,
+      "balanced_accuracy_shared_bootstrap_ci95": [
+        0.7033156564111545,
+        0.7591764817241264
+      ],
+      "balanced_accuracy_shared_bootstrap_se": 0.014230892460005586,
+      "ece": 0.14289106025227874,
+      "ece_shared_bootstrap_ci95": [
+        0.13366729592328952,
+        0.15262401890933572
+      ],
+      "ece_shared_bootstrap_se": 0.0048487514646013636,
+      "inference_ms_per_trial_median": 0.07976102642714977,
+      "job_total_seconds_median": 1.917132532224059,
+      "label": "FBCNet",
+      "model": "fbcnet",
+      "parameter_count_median": 9218,
+      "rank": 19,
+      "role": "fbcnet"
+    },
+    {
+      "accuracy": 0.7323588646949757,
+      "accuracy_shared_bootstrap_ci95": [
+        0.7025297360150138,
+        0.7603705322660879
+      ],
+      "accuracy_shared_bootstrap_se": 0.014727744574275394,
+      "balanced_accuracy": 0.7320096467274003,
+      "balanced_accuracy_shared_bootstrap_ci95": [
+        0.7021994815634581,
+        0.7600147087587666
+      ],
+      "balanced_accuracy_shared_bootstrap_se": 0.014728227958677854,
+      "ece": 0.1418917440679297,
+      "ece_shared_bootstrap_ci95": [
+        0.13320079271026988,
+        0.15096615366555552
+      ],
+      "ece_shared_bootstrap_se": 0.004520219009361132,
+      "inference_ms_per_trial_median": 0.08739696349948645,
+      "job_total_seconds_median": 2.4147939262911677,
+      "label": "CardinalFBC",
+      "model": "cardinal_fbc",
+      "parameter_count_median": 9218,
+      "rank": 20,
+      "role": "cardinal_fbc"
+    },
+    {
+      "accuracy": 0.7336063073757518,
+      "accuracy_shared_bootstrap_ci95": [
+        0.6981300680595125,
+        0.7664870465337132
+      ],
+      "accuracy_shared_bootstrap_se": 0.0174145481344611,
+      "balanced_accuracy": 0.7331630938975142,
+      "balanced_accuracy_shared_bootstrap_ci95": [
+        0.6977172422783202,
+        0.7660368619068801
+      ],
+      "balanced_accuracy_shared_bootstrap_se": 0.017415538982121906,
+      "ece": 0.06976190135500773,
+      "ece_shared_bootstrap_ci95": [
+        0.06117963407237057,
+        0.07944768389098876
+      ],
+      "ece_shared_bootstrap_se": 0.0046867124519516705,
+      "inference_ms_per_trial_median": 1.7389635788276792,
+      "job_total_seconds_median": 42.9636110747233,
+      "label": "TCFormer",
+      "model": "tcformer",
+      "multiclass_brier": 0.3212443434879037,
+      "multiclass_brier_shared_bootstrap_ci95": [
+        0.2846841080636555,
+        0.3600134004413452
+      ],
+      "multiclass_brier_shared_bootstrap_se": 0.019203665280949737,
+      "nll": 0.5032086458442918,
+      "nll_shared_bootstrap_ci95": [
+        0.44456838469263477,
+        0.5658825531565753
+      ],
+      "nll_shared_bootstrap_se": 0.030982514832560554,
+      "parameter_count_median": 75668,
+      "rank": 12,
+      "role": "tcformer"
+    }
+  ],
+  "shared_seed_subject_stratified_bootstrap": {
+    "generator": "NumPy PCG64",
+    "interval": "2.5th and 97.5th percentiles using linear quantiles",
+    "method": "subject-stratified nonparametric percentile bootstrap",
+    "metrics_and_models": {
+      "accuracy": [
+        "cardinal_fbc_compactdyn_scale025_extended",
+        "cardinal_dynamics_sinc_extended",
+        "fbcnet",
+        "cardinal_fbc",
+        "tcformer"
+      ],
+      "balanced_accuracy": [
+        "cardinal_fbc_compactdyn_scale025_extended",
+        "cardinal_dynamics_sinc_extended",
+        "fbcnet",
+        "cardinal_fbc",
+        "tcformer"
+      ],
+      "ece": [
+        "cardinal_fbc_compactdyn_scale025_extended",
+        "cardinal_dynamics_sinc_extended",
+        "fbcnet",
+        "cardinal_fbc",
+        "tcformer"
+      ],
+      "multiclass_brier": [
+        "cardinal_fbc_compactdyn_scale025_extended",
+        "cardinal_dynamics_sinc_extended",
+        "tcformer"
+      ],
+      "nll": [
+        "cardinal_fbc_compactdyn_scale025_extended",
+        "cardinal_dynamics_sinc_extended",
+        "tcformer"
+      ]
+    },
+    "purpose": "selected-model metric standard errors and absolute intervals, balanced-accuracy leader pairwise intervals, and dataset-delta figure intervals",
+    "resamples": 100000,
+    "resampling": "subjects sampled with replacement independently inside each dataset; the exact per-dataset index arrays are shared across every metric and model; datasets weighted equally",
+    "se_definition": "sample standard deviation of bootstrap estimates (ddof=1)",
+    "seed": 20260729,
+    "source_sha256": {
+      "calibration_summary.csv": "e1ba9e5934606ca7e4df91dd67c4a59aec7e32eea041fcaba7a1c8626f1bafeb",
+      "overall_summary.csv": "d45dd54801f4ba9074bba808cd7076bd04c9a5267944ec4f7af274de96a11c6f",
+      "subject_metrics.csv": "58103676e66416a5cf22c6de3d230dccff4411e8c3333d81f4490cb408c06660"
+    }
+  },
+  "source": {
+    "analysis_contract_sha256": "9d7eba89ca00621a8a3a681fc1ab408818e1df099ef1040685934eb1c7a82dfa",
+    "analysis_directory": "dl/results/common_grid_v6/analysis",
+    "input_sha256": {
+      "analysis.json": "66892b5fb136226404ff895193e836177be387a60ae57a4da7685929f12e2fa8",
+      "calibration_summary.csv": "e1ba9e5934606ca7e4df91dd67c4a59aec7e32eea041fcaba7a1c8626f1bafeb",
+      "complexity_summary.csv": "c34c0360331ebbd27377b20fbd00f6e8438975a0cf1b60efd3e1a95871f148f2",
+      "dataset_summary.csv": "0f24934e47c275ffb66b06e78266cb7fc1883f3046da876a5ed50089c09686cf",
+      "manifest.json": "ed1070f69367e36109c473c193b4f898de40ad689a8d367ac3d9e7471a82a1cd",
+      "model_ranking.csv": "adddfd4687e09710b2867252fc873687f48ef073c555a9c0b604af9dd31e4e32",
+      "overall_summary.csv": "d45dd54801f4ba9074bba808cd7076bd04c9a5267944ec4f7af274de96a11c6f",
+      "subject_metrics.csv": "58103676e66416a5cf22c6de3d230dccff4411e8c3333d81f4490cb408c06660",
+      "tcformer_overall_context.csv": "94dd7743bdefafa64a6874c132482c33e5278016369f5c69a06f4b1fc199c391"
+    },
+    "plan_sha256": "65b93b7e5d09cfc30fb6ce28156368e66aec1503f4efa37faa3189e25ebbc3b1"
+  }
+}

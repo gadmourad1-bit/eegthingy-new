@@ -216,7 +216,7 @@ COMMON_ARCHITECTURES: tuple[str, ...] = (
 SOURCE_FILES: tuple[str, ...] = (
     "full_grid.py",
     "project_gpu_leases.py",
-    "benchmark.py",
+    "runner.py",
     "baselines.py",
     "tcformer_source.py",
     "models.py",
@@ -225,6 +225,13 @@ SOURCE_FILES: tuple[str, ...] = (
     "config.py",
 )
 ANALYSIS_SOURCE_FILES: tuple[str, ...] = ("full_grid_analysis.py",)
+WORKER_LAZY_IMPORT_MODULES: tuple[str, ...] = (
+    "runner",
+    "baselines",
+    "models",
+    "training",
+    "data",
+)
 MODEL_PREFLIGHT_CONTRACTS: tuple[dict[str, Any], ...] = (
     {
         "name": "local_exp4_15ch_256t_binary",
@@ -3004,13 +3011,7 @@ def verify_runtime_identity(
         # Freeze every lazily imported in-repository execution module in this
         # worker before its source digest is checked. This prevents a worker
         # waiting on a busy GPU from importing a later on-disk edit hours later.
-        for module_name in (
-            "benchmark",
-            "baselines",
-            "models",
-            "training",
-            "data",
-        ):
+        for module_name in WORKER_LAZY_IMPORT_MODULES:
             importlib.import_module(f"{__package__}.{module_name}")
     if tuple(plan.get("dataset_order", ())) != OPENED_DATASETS:
         raise FullGridError("plan does not contain the exact five opened datasets")

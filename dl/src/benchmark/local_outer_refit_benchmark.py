@@ -1,7 +1,7 @@
 """Exact local outer-row rerun for the four legacy deepnet procedures.
 
-This runner is intentionally separate from both the historical ``deepnet``
-benchmarks and the ``eeg_mi`` neural tournament.  It consumes the frozen
+This runner is intentionally separate from both the historical research
+benchmarks and the active ``benchmark`` neural tournament.  It consumes the frozen
 ``local_exp4`` v2 cache and enforces, per participant and seed:
 
 * Phase A: recordings 1--2 fit, recording 3 selects checkpoint duration and
@@ -51,12 +51,12 @@ from sklearn.metrics import (
 from benchmark.config import preprocessing_for_dataset
 from benchmark.data import load_subject_cache, split_indices
 
-from ..research.cameo_net import CAMEOClassifier, CAMEOConfig
-from ..research.config import PROJECT_ROOT
-from ..research.data import make_spd_covariances
-from ..research.orbit_transport_net import OrbitTransportClassifier, OrbitTransportConfig
-from ..research.parity_fuse_net import ParityFuseClassifier, ParityFuseConfig
-from ..research.parity_net import HemiParityClassifier, ParityConfig
+from .research.cameo_net import CAMEOClassifier, CAMEOConfig
+from .research.config import PROJECT_ROOT
+from .research.data import make_spd_covariances
+from .research.orbit_transport_net import OrbitTransportClassifier, OrbitTransportConfig
+from .research.parity_fuse_net import ParityFuseClassifier, ParityFuseConfig
+from .research.parity_net import HemiParityClassifier, ParityConfig
 
 
 SCHEMA_VERSION = "eeg-mi-local-outer-refit-v2"
@@ -98,8 +98,8 @@ class _ProcedureConfigSpec:
 _PROCEDURE_CONFIGS: dict[str, _ProcedureConfigSpec] = {
     "cameo": _ProcedureConfigSpec(
         relative_path="configs/local_procedures/cameo_v1.json",
-        size_bytes=830,
-        sha256="23d07dcfc03bac8ac1e0cb076621850d5738df5a7d31fa7ea89ba42b3dfb2336",
+        size_bytes=829,
+        sha256="e21d87705155f630be58f108a6cb80d5db2c7d59553459b0d638c24aeb321db6",
         stable_id="architecture.cameo",
         config_class=CAMEOConfig,
         architecture_fields=(
@@ -128,8 +128,8 @@ _PROCEDURE_CONFIGS: dict[str, _ProcedureConfigSpec] = {
     ),
     "hemiparity": _ProcedureConfigSpec(
         relative_path="configs/local_procedures/hemiparity_v1.json",
-        size_bytes=570,
-        sha256="0978f53bbc603378052d4ea97355641fe454d250f2745593ead239df4eb463cc",
+        size_bytes=569,
+        sha256="8f4c5cef14e4a0edc782c350e06de33a661d7205016d995adecf09595ec9898f",
         stable_id="architecture.hemiparity",
         config_class=ParityConfig,
         architecture_fields=(
@@ -155,8 +155,8 @@ _PROCEDURE_CONFIGS: dict[str, _ProcedureConfigSpec] = {
     ),
     "parity_fuse": _ProcedureConfigSpec(
         relative_path="configs/local_procedures/parity_fuse_v1.json",
-        size_bytes=629,
-        sha256="c5a2e84163b49f2da7c47c359418aa790f7a9d6490c7e0bc48c9aa8be3f9c6fb",
+        size_bytes=628,
+        sha256="c2c45117d3aa9448ad715732f0c9f370ee96653944b0a76efefc72f317ae3bbc",
         stable_id="architecture.parity_fuse",
         config_class=ParityFuseConfig,
         architecture_fields=(
@@ -185,8 +185,8 @@ _PROCEDURE_CONFIGS: dict[str, _ProcedureConfigSpec] = {
     ),
     "orbit_v3": _ProcedureConfigSpec(
         relative_path="configs/local_procedures/orbit_v3.json",
-        size_bytes=849,
-        sha256="95edd8a374892e4f28a8feb4e3dfe4ffb32e415b4c3cca2d1ea4a6f89a72b456",
+        size_bytes=848,
+        sha256="aed0c4303a6dcd046dc49b233dee3a2fc926859d42382506e8b823d3e195e806",
         stable_id="architecture.orbit_v3",
         config_class=OrbitTransportConfig,
         architecture_fields=(

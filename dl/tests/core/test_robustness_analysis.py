@@ -27,7 +27,7 @@ from benchmark.robustness_screen import (
     _record_path,
     robustness_jobs,
 )
-from tests.benchmark.test_robustness_screen import (
+from tests.core.test_robustness_screen import (
     _digest,
     environment_identity,
     write_complete_run,

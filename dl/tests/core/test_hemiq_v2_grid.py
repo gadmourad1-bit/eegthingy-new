@@ -437,7 +437,7 @@ import sys
 from pathlib import Path
 
 from benchmark import hemiq_v2_grid as grid
-from tests.benchmark import test_hemiq_v2_grid as support
+from tests.core import test_hemiq_v2_grid as support
 
 boundary = sys.argv[1]
 run_root = Path(sys.argv[2])

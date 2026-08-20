@@ -2620,7 +2620,7 @@ def test_project_gpu_worker_lease_is_cuda_only_and_uses_central_api(
     assert acquire_call["gpu_uuid"] == gpu_uuid
     assert acquire_call["track_scope"] == "geoadapt-v2"
     assert (
-        acquire_call["project_root"] == Path(geoadapt_v2.__file__).resolve().parents[1]
+        acquire_call["project_root"] == Path(geoadapt_v2.__file__).resolve().parents[2]
     )
     assert calls[1][1] is fake_lease
 

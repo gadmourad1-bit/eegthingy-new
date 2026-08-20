@@ -32,6 +32,11 @@ if [[ "$UV_VERSION_OUTPUT" != "uv $EXPECTED_UV_VERSION" \
     fail "Expected uv $EXPECTED_UV_VERSION, observed: $UV_VERSION_OUTPUT"
 fi
 
+# Formal Python entry points also verify the active UV environment by invoking
+# ``uv`` directly. Non-interactive SSH sessions may expose the audited binary
+# only through UV_BIN, so make that exact executable discoverable by children.
+export PATH="$(dirname -- "$UV_EXECUTABLE"):${PATH:-}"
+
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
 unset PYTHONHOME PYTHONPATH VIRTUAL_ENV

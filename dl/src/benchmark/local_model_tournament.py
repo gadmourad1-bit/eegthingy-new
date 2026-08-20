@@ -104,7 +104,7 @@ ARCHITECTURES: tuple[str, ...] = (
 )
 
 BENCHMARK_SOURCE_NAMES: tuple[str, ...] = (
-    "benchmark.py",
+    "runner.py",
     "analysis.py",
     "models.py",
     "training.py",
