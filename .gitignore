@@ -6,3 +6,6 @@ deepnet/checkpoints/
 deepnet/results/
 deepnet/**/*.pt
 .pytest_cache/
+
+# trained online decoders (regenerate by training; large binaries)
+models/deep/*.pt

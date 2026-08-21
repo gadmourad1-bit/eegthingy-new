@@ -424,6 +424,29 @@ def select_decoder():
             return "deep_compactdyn" if c in ("3", "compactdyn", "deep") else "deep_sinc"
         print("pick 1-4")
 
+def select_deep_source(kind):
+    """Reuse a saved network or train a new one. Returns a checkpoint path, or
+    None to train from recordings."""
+    saved = deepmod.list_checkpoints(kind)
+    if not saved:
+        print("\nNo saved model for this decoder yet — training a new one.")
+        return None
+    print(f"\nSaved {decoder_label(kind)} models:")
+    for i, path in enumerate(saved, 1):
+        print(f"  {i}) {deepmod.describe_checkpoint(path)}")
+    print("  t) Train a new one from recordings")
+    while True:
+        try:
+            c = input("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if c in ("t", "train", "n", "new"):
+            return None
+        if c.isdigit() and 1 <= int(c) <= len(saved):
+            return saved[int(c) - 1]
+        print(f"pick 1-{len(saved)} or t")
+
+
 def is_deep(kind):
     return kind.startswith("deep_")
 
@@ -546,44 +569,60 @@ def run_online(headless=False):
         return
 
     decoder_kind = select_decoder()
-
-    files = discover_files()
-    if not files:
-        print(f"no .fif files found in {DATA_DIR}")
-        return
-
-    print("\nAvailable files:")
-    for i, f in enumerate(files, 1):
-        print(f"  {i}) {os.path.basename(f)}")
-    print()
-
-    train_files = select_files("training files (e.g. 1,2,3): ", files)
-    if train_files is None:
-        return
-
-    print(f"\nTraining on {len(train_files)} file(s):")
-    for f in train_files:
-        print(f"  - {os.path.basename(f)}")
-
     deep_mode = is_deep(decoder_kind)
-    parts = [load_epochs(decoder_kind, f) for f in train_files]
-    X_train = np.concatenate([X for X, _ in parts])
-    y_train = np.concatenate([y for _, y in parts])
-    groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
-    n_channels, n_times = X_train.shape[-2], X_train.shape[-1]
-    shape_note = (f"{n_channels} ch x {n_times} samples" if deep_mode
-                  else f"{X_train.shape[1]} bands x {n_channels} ch x {n_times} samples")
 
-    clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=groups)
-    print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs ({shape_note}).")
+    checkpoint = select_deep_source(decoder_kind) if deep_mode else None
+    X_train = y_train = None
 
-    raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
-    full_names = raw_full.ch_names
-    train_sfreq = float(raw_full.info['sfreq'])
+    if checkpoint is not None:
+        clf = deepmod.DeepDecoder.load(checkpoint, device=DEEP_DEVICE)
+        meta = clf.meta_
+        print(f"\nLoaded {decoder_label(decoder_kind)} from {os.path.basename(checkpoint)}\n"
+              f"  trained on {', '.join(meta['trained_on']) or 'unknown'} "
+              f"({meta['epochs_run']} passes, best epoch {meta['best_epoch']}, "
+              f"held-out loss {meta['validation_loss']:.4f})")
+        n_times = clf.n_times_
+        train_sfreq = float(deepmod.SFREQ)
+    else:
+        files = discover_files()
+        if not files:
+            print(f"no .fif files found in {DATA_DIR}")
+            return
+
+        print("\nAvailable files:")
+        for i, f in enumerate(files, 1):
+            print(f"  {i}) {os.path.basename(f)}")
+        print()
+
+        train_files = select_files("training files (e.g. 1,2,3): ", files)
+        if train_files is None:
+            return
+
+        print(f"\nTraining on {len(train_files)} file(s):")
+        for f in train_files:
+            print(f"  - {os.path.basename(f)}")
+
+        parts = [load_epochs(decoder_kind, f) for f in train_files]
+        X_train = np.concatenate([X for X, _ in parts])
+        y_train = np.concatenate([y for _, y in parts])
+        groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
+        n_channels, n_times = X_train.shape[-2], X_train.shape[-1]
+        shape_note = (f"{n_channels} ch x {n_times} samples" if deep_mode
+                      else f"{X_train.shape[1]} bands x {n_channels} ch x {n_times} samples")
+
+        clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=groups)
+        print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs ({shape_note}).")
+        if deep_mode:
+            saved_to = clf.save(sources=train_files)
+            print(f"saved for reuse: {os.path.relpath(saved_to, os.path.dirname(DATA_DIR))}")
+
+        train_sfreq = float(mne.io.read_raw_fif(train_files[0], preload=False).info['sfreq'])
+
+    # board EEG order -> the decoder's channel order; the same for every recording
     try:
-        train_idx = [full_names.index(name) for name in EEG_CHANNELS_TARGETS]
+        train_idx = [EEG_CHANNELS_MAPPING.index(name) for name in EEG_CHANNELS_TARGETS]
     except ValueError as e:
-        print(f"channel mismatch between training data and EEG_CHANNELS_TARGETS: {e}")
+        print(f"channel mismatch between EEG_CHANNELS_MAPPING and EEG_CHANNELS_TARGETS: {e}")
         return
 
     ws = WebSocket()
@@ -643,7 +682,7 @@ def run_online(headless=False):
     if not headless:
         from gui import GUI
         band_sep, band_abs_max = None, 1.0
-        if getattr(clf, "has_bands", True):   # nets have no per-band attribution
+        if getattr(clf, "has_bands", True) and X_train is not None:
             _, _, train_signal = clf.analyze(X_train)
             cls = clf.classes_
             sig0, sig1 = train_signal[y_train == cls[0]], train_signal[y_train == cls[1]]

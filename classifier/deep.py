@@ -11,8 +11,11 @@ front end -- 4-40 Hz, 125 -> 128 Hz, common-average reference, 2.0 s epochs of
 256 samples, per-channel standardisation -- which differs from the classical
 8-30 Hz four-band causal path and is implemented here.
 """
+import hashlib
 import os
+import re
 import sys
+from datetime import datetime
 
 import mne
 import numpy as np
@@ -71,6 +74,7 @@ FMAX = float(LOCAL_EXP4_PREPROCESSING["fmax_hz"])
 SFREQ = float(LOCAL_EXP4_PREPROCESSING["sfreq_hz"])
 N_TIMES = int(LOCAL_EXP4_PREPROCESSING["n_times"])
 EPOCH_S = float(LOCAL_EXP4_PREPROCESSING["tmax_seconds_exclusive"])
+CHECKPOINT_DIR = os.path.join(_ROOT, "models", "deep")
 RESAMPLE_PAD = 100      # see prepare_window(); fixed so fidelity is buffer-length independent
 _FILT = dict(l_trans_bandwidth=float(LOCAL_EXP4_PREPROCESSING["l_trans_bandwidth_hz"]),
              h_trans_bandwidth=float(LOCAL_EXP4_PREPROCESSING["h_trans_bandwidth_hz"]))
@@ -173,6 +177,7 @@ class DeepDecoder(BaseEstimator, ClassifierMixin):
         self.positions_t_ = torch.as_tensor(self.positions_, dtype=torch.float32,
                                             device=self.device_)
         self.n_parameters_ = n_par
+        self.n_times_ = int(X.shape[2])
         self.history_ = history
         print(f"trained: {history['epochs_run']} passes run, best epoch "
               f"{history['best_epoch']}, held-out loss "
@@ -211,6 +216,59 @@ class DeepDecoder(BaseEstimator, ClassifierMixin):
                        / np.clip(proba[:, 0], 1e-12, 1.0))
         return proba, score, np.zeros((len(proba), len(FB_BANDS)))
 
+    def save(self, path=None, sources=()):
+        """Persist the trained net, its channel scaler, and enough provenance to
+        refuse a mismatched reload. Returns the path written."""
+        if path is None:
+            path = os.path.join(CHECKPOINT_DIR, f"{self.kind}__{_tag(sources)}.pt")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save({
+            "format": "eeg-online-deep-v1",
+            "kind": self.kind,
+            "registry_name": DEEP_MODELS[self.kind][0],
+            "state_dict": {k: v.cpu() for k, v in self.model_.state_dict().items()},
+            "classes": np.asarray(self.classes_),
+            "mean": self.mean_, "std": self.std_,
+            "channels": CHANNELS,
+            "n_times": int(self.n_times_),
+            "n_parameters": int(self.n_parameters_),
+            "epochs_run": int(self.history_["epochs_run"]),
+            "best_epoch": int(self.history_["best_epoch"]),
+            "validation_loss": float(self.history_["best_validation_loss"]),
+            "trained_on": [os.path.basename(f) for f in sources],
+            "trained_at": datetime.now().isoformat(timespec="seconds"),
+        }, path)
+        return path
+
+    @classmethod
+    def load(cls, path, device="auto"):
+        """Rebuild a decoder from a checkpoint written by save()."""
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        if blob.get("format") != "eeg-online-deep-v1":
+            raise ValueError(f"{path} is not an online deep checkpoint")
+        if tuple(blob["channels"]) != tuple(CHANNELS):
+            raise ValueError(f"{path} was trained on a different montage: {blob['channels']}")
+        self = cls(blob["kind"], device=device)
+        self.classes_ = np.asarray(blob["classes"])
+        self.mean_, self.std_ = blob["mean"], blob["std"]
+        self.n_times_ = int(blob["n_times"])
+        self.n_parameters_ = int(blob["n_parameters"])
+        self.positions_ = _atlas_unit_positions(CHANNELS)
+        self.history_ = {"epochs_run": blob["epochs_run"], "best_epoch": blob["best_epoch"],
+                         "best_validation_loss": blob["validation_loss"]}
+        model = make_model(blob["registry_name"], n_channels=len(CHANNELS),
+                           n_outputs=len(self.classes_), n_times=self.n_times_,
+                           sfreq=SFREQ, channel_names=CHANNELS,
+                           channel_positions=torch.as_tensor(self.positions_,
+                                                             dtype=torch.float32))
+        model.load_state_dict(blob["state_dict"])
+        self.device_ = torch.device(resolve_device(self.device))
+        self.model_ = model.to(self.device_).eval()
+        self.positions_t_ = torch.as_tensor(self.positions_, dtype=torch.float32,
+                                            device=self.device_)
+        self.meta_ = blob
+        return self
+
     def prepare_window(self, buf, sfreq):
         """Raw live buffer (channels x samples, volts) -> (1, 15, 256) window."""
         x = _bandpass(np.asarray(buf, dtype=np.float64), sfreq)
@@ -226,3 +284,38 @@ class DeepDecoder(BaseEstimator, ClassifierMixin):
 def buffer_samples(sfreq, warmup_s):
     """Live buffer length: one epoch plus filter warm-up, at the source rate."""
     return int(round((EPOCH_S + warmup_s) * sfreq))
+
+
+def _tag(sources):
+    """Short, collision-safe name for a training set: readable for the handful of
+    recordings a personalised model uses, hashed once a pooled model spans many."""
+    names = sorted(os.path.basename(f) for f in sources)
+    subjects = sorted({int(m.group(1)) for n in names
+                       if (m := re.search(r"subject(\d+)", n))})
+    if not subjects:
+        return "session"
+    if len(subjects) <= 3:
+        return f"s{'-'.join(map(str, subjects))}_{len(names)}runs"
+    digest = hashlib.sha1("|".join(names).encode()).hexdigest()[:8]
+    return f"{len(subjects)}subjects_{len(names)}runs_{digest}"
+
+
+def list_checkpoints(kind):
+    """Saved checkpoints for one decoder kind, newest first."""
+    if not os.path.isdir(CHECKPOINT_DIR):
+        return []
+    paths = [os.path.join(CHECKPOINT_DIR, f) for f in os.listdir(CHECKPOINT_DIR)
+             if f.startswith(f"{kind}__") and f.endswith(".pt")]
+    return sorted(paths, key=os.path.getmtime, reverse=True)
+
+
+def describe_checkpoint(path):
+    """One-line summary for the selection menu, without building the model."""
+    try:
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        return (f"{os.path.basename(path)}  "
+                f"[{len(blob.get('trained_on', []))} recordings; "
+                f"val loss {blob['validation_loss']:.3f}; "
+                f"{blob['trained_at'].replace('T', ' ')[:16]}]")
+    except Exception as error:
+        return f"{os.path.basename(path)}  [unreadable: {error}]"
