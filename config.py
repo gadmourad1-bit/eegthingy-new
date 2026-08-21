@@ -1,7 +1,11 @@
 DATA_DIR = './data'
 STRIDE_S = 0.2
 FILTER_WARMUP_S = 2.0
-CALIBRATION_SECONDS = 45
+CALIBRATION_SECONDS = 45          # classical decoders: EA/Riemann alignment reference + boundary seed
+CALIBRATION_SECONDS_DEEP = 15     # deep decoders: boundary seed only (no alignment reference to fit)
+DEEP_EPOCHS = 200                 # training passes for the deep decoders (early stopping usually ends sooner)
+DEEP_SEED = 7
+DEEP_DEVICE = 'auto'              # 'auto' picks CUDA, then Apple Metal (MPS), then CPU; or force one
 EEG_CHANNELS_MAPPING = [
     'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',  # Cyton ch 1-8  (ch8 unplugged)
     'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',    # Daisy  ch 9-16

@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from brainflow.board_shim import BoardShim
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
                     EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
-                    STRIDE_S, CALIBRATION_SECONDS, TARGET_MAPPINGS, CONF_FLOOR,
+                    STRIDE_S, CALIBRATION_SECONDS, CALIBRATION_SECONDS_DEEP,
+                    DEEP_EPOCHS, DEEP_SEED, DEEP_DEVICE, TARGET_MAPPINGS, CONF_FLOOR,
                     RECENTER_ADAPTIVE, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -30,6 +31,12 @@ try:   # optional: enables the Riemannian decoder; EA works without pyriemann
     _HAS_PYRIEMANN = True
 except ImportError:
     _HAS_PYRIEMANN = False
+try:   # optional: enables the deep decoders; needs torch + the dl/ package
+    import deep as deepmod
+    _HAS_DEEP = True
+except Exception as _deep_error:   # torch missing, or dl/ unavailable
+    _DEEP_IMPORT_ERROR = _deep_error
+    _HAS_DEEP = False
 from utils.devices import OpenBCI
 from ws import WebSocket
 from smoother import Smoother
@@ -301,10 +308,11 @@ class BoundaryRecenter:
         return s - self.center
 
 
-def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
-    """Stream `seconds` of EEG while the subject imagines the task in the online
-    context, then slice it into per-band windows for set_reference()."""
-    buffer_n = window_n + warmup_n
+def record_calibration(bci, sfreq, train_idx, window_n, buffer_n, make_window,
+                       seconds, deep_mode=False):
+    """Stream `seconds` of EEG in the online context, then slice it into decoder
+    windows. For the classical decoders these feed set_reference(); for the nets
+    they only seed the decision boundary."""
     collected, lock = [], threading.Lock()
 
     def collect(chunk):
@@ -316,7 +324,10 @@ def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
 
     bci.callback = collect
     bci.start()
-    print(f"\nCalibration: imagine the task(s) in the online context for {seconds}s…")
+    what = ("Calibration (boundary only — the network needs no alignment): relax, then "
+            "imagine the task(s)" if deep_mode
+            else "Calibration: imagine the task(s) in the online context")
+    print(f"\n{what} for {seconds}s…")
     for s in range(seconds, 0, -1):
         print(f"  {s:2d}", end="\r", flush=True)
         time.sleep(1)
@@ -331,8 +342,7 @@ def record_calibration(bci, sfreq, train_idx, window_n, warmup_n, seconds):
     step = max(1, int(round(0.5 * sfreq)))
     windows = []
     for end in range(buffer_n, full.shape[1] + 1, step):
-        buf = full[:, end - buffer_n:end]
-        windows.append(np.stack([bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS], axis=0))
+        windows.append(make_window(full[:, end - buffer_n:end])[0])
     return np.array(windows)
 
 def parse_indices(raw, n):
@@ -386,11 +396,15 @@ def select_device():
         print("pick 1 or 2")
 
 def select_decoder():
-    """EA + FB-CSP (fast, default) or the Riemannian tangent-space decoder. Returns a
-    decoder kind string ('ea' | 'riemann')."""
+    """Classical (EA+FB-CSP, Riemannian tangent) or deep (the two benchmark-winning
+    in-house networks). Returns a decoder kind string."""
     print("\nSelect decoder:")
     print("  1) EA + FB-CSP     — Euclidean Alignment (fast, default)")
     print("  2) Riemann tangent — Riemannian alignment + tangent space + LR")
+    print("  3) Deep: CardinalFBC + compact dynamics — 32k params, benchmark rank 1")
+    print("  4) Deep: Cardinal Sinc dynamics        — 13.5k params, best on local data")
+    if not _HAS_DEEP:
+        print("     (3 and 4 need torch: `uv pip install torch`)")
     while True:
         try:
             c = input("> ").strip().lower()
@@ -403,14 +417,34 @@ def select_decoder():
                 print("pyriemann not installed — using EA (`uv add pyriemann` to enable Riemann).")
                 return "ea"
             return "riemann"
-        print("pick 1 or 2")
+        if c in ("3", "compactdyn", "deep", "4", "sinc"):
+            if not _HAS_DEEP:
+                print(f"deep decoders unavailable: {_DEEP_IMPORT_ERROR}")
+                continue
+            return "deep_compactdyn" if c in ("3", "compactdyn", "deep") else "deep_sinc"
+        print("pick 1-4")
+
+def is_deep(kind):
+    return kind.startswith("deep_")
 
 def make_decoder(kind):
-    """Instantiate the chosen decoder; both share the fit/set_reference/predict_proba/analyze API."""
+    """Instantiate the chosen decoder; all share the fit/set_reference/predict_proba/analyze API."""
+    if is_deep(kind):
+        return deepmod.DeepDecoder(kind, epochs=DEEP_EPOCHS, seed=DEEP_SEED,
+                                   device=DEEP_DEVICE)
     return FilterBankTangentSpace() if kind == "riemann" else EAFilterBankCSP(n_components=2)
 
 def decoder_label(kind):
+    if is_deep(kind):
+        return deepmod.DEEP_MODELS[kind][1]
     return "Riemann tangent-space (RA)" if kind == "riemann" else "EA + FB-CSP (2 comp)"
+
+def load_epochs(kind, file_name):
+    """Front end for the chosen decoder family: the classical four-band 8-30 Hz
+    causal path, or the benchmark's 4-40 Hz / 128 Hz / CAR profile for the nets."""
+    if is_deep(kind):
+        return deepmod.process_data(file_name, TARGET_MAPPINGS)
+    return process_data(file_name, TARGET_MAPPINGS)
 
 def run_offline():
     files = discover_files()
@@ -437,7 +471,7 @@ def run_offline():
     decoder_kind = select_decoder()
 
     def load_xy(file_list):
-        parts = [process_data(f, TARGET_MAPPINGS) for f in file_list]
+        parts = [load_epochs(decoder_kind, f) for f in file_list]
         X = np.concatenate([X for X, _ in parts])
         y = np.concatenate([y for _, y in parts])
         groups = np.concatenate([[i] * len(yy) for i, (_, yy) in enumerate(parts)])
@@ -531,15 +565,17 @@ def run_online(headless=False):
     for f in train_files:
         print(f"  - {os.path.basename(f)}")
 
-    parts = [process_data(f, TARGET_MAPPINGS) for f in train_files]
+    deep_mode = is_deep(decoder_kind)
+    parts = [load_epochs(decoder_kind, f) for f in train_files]
     X_train = np.concatenate([X for X, _ in parts])
     y_train = np.concatenate([y for _, y in parts])
     groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
-    n_bands, n_channels, n_times = X_train.shape[1], X_train.shape[2], X_train.shape[3]
+    n_channels, n_times = X_train.shape[-2], X_train.shape[-1]
+    shape_note = (f"{n_channels} ch x {n_times} samples" if deep_mode
+                  else f"{X_train.shape[1]} bands x {n_channels} ch x {n_times} samples")
 
     clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=groups)
-    print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs "
-          f"({n_bands} bands x {n_channels} ch x {n_times} samples).")
+    print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs ({shape_note}).")
 
     raw_full = mne.io.read_raw_fif(train_files[0], preload=False)
     full_names = raw_full.ch_names
@@ -565,9 +601,18 @@ def run_online(headless=False):
         print(f"warning: live sfreq={sfreq} differs from training sfreq={train_sfreq}; "
               "predictions may degrade")
 
-    window_n = n_times
     warmup_n = int(round(FILTER_WARMUP_S * sfreq))
-    buffer_n = window_n + warmup_n
+    if deep_mode:
+        # the net's epoch is defined at 128 Hz; the live buffer is at the board rate
+        window_n = int(round(deepmod.EPOCH_S * sfreq))
+        buffer_n = deepmod.buffer_samples(sfreq, FILTER_WARMUP_S)
+        make_window = lambda buf: clf.prepare_window(buf, sfreq)
+    else:
+        window_n = n_times
+        buffer_n = window_n + warmup_n
+        make_window = lambda buf: np.stack(
+            [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS],
+            axis=0)[np.newaxis, ...]
     buffer = np.zeros((len(train_idx), 0), dtype=np.float64)
     buffer_lock = threading.Lock()
 
@@ -575,27 +620,35 @@ def run_online(headless=False):
           f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
           f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
-    # EA alignment + decision-boundary recentering, both from the calibration block.
+    # Classical decoders calibrate two things: the alignment reference (EA whitener /
+    # Riemannian mean) and the decision-boundary neutral. The nets have no alignment
+    # reference to fit, so their calibration is shorter and only seeds the boundary.
     recenter = BoundaryRecenter()
-    X_cal = record_calibration(bci, sfreq, train_idx, window_n, warmup_n, CALIBRATION_SECONDS)
+    cal_seconds = CALIBRATION_SECONDS_DEEP if deep_mode else CALIBRATION_SECONDS
+    X_cal = record_calibration(bci, sfreq, train_idx, window_n, buffer_n, make_window,
+                               cal_seconds, deep_mode)
     if X_cal is not None and len(X_cal) >= 2:
-        clf.set_reference(X_cal)
+        if not deep_mode:
+            clf.set_reference(X_cal)
         pcal = clf.predict_proba(X_cal)
         scal = np.log(np.clip(pcal[:, 1], 1e-9, 1.0) / np.clip(pcal[:, 0], 1e-9, 1.0))
         recenter.seed(scal)
         mode = "adaptive" if recenter.adaptive else "FROZEN at calibration"
-        print(f"aligned on {len(X_cal)} windows (boundary center={recenter.center:+.2f}, {mode})")
+        what = "boundary seeded" if deep_mode else "aligned"
+        print(f"{what} on {len(X_cal)} windows (boundary center={recenter.center:+.2f}, {mode})")
     else:
-        print("calibration produced too little data; using pooled training reference, center=0.")
+        print("calibration produced too little data; using the trained model as-is, center=0.")
 
     gui = None
     if not headless:
         from gui import GUI
-        _, _, train_signal = clf.analyze(X_train)
-        cls = clf.classes_
-        sig0, sig1 = train_signal[y_train == cls[0]], train_signal[y_train == cls[1]]
-        band_sep = np.abs(sig1.mean(0) - sig0.mean(0)) / (np.sqrt(0.5 * (sig0.var(0) + sig1.var(0))) + 1e-9)
-        band_abs_max = float(np.percentile(np.abs(train_signal), 99)) or 1.0
+        band_sep, band_abs_max = None, 1.0
+        if getattr(clf, "has_bands", True):   # nets have no per-band attribution
+            _, _, train_signal = clf.analyze(X_train)
+            cls = clf.classes_
+            sig0, sig1 = train_signal[y_train == cls[0]], train_signal[y_train == cls[1]]
+            band_sep = np.abs(sig1.mean(0) - sig0.mean(0)) / (np.sqrt(0.5 * (sig0.var(0) + sig1.var(0))) + 1e-9)
+            band_abs_max = float(np.percentile(np.abs(train_signal), 99)) or 1.0
         gui = GUI(bci, smoother, clf.classes_, sfreq,
                   band_sep=band_sep, band_abs_max=band_abs_max)
 
@@ -628,8 +681,7 @@ def run_online(headless=False):
                 return
             buf = buffer.copy()
 
-        bands = [bandpass(buf, sfreq, l, h)[:, -window_n:] for (l, h) in FB_BANDS]
-        window = np.stack(bands, axis=0)[np.newaxis, ...]
+        window = make_window(buf)
 
         if headless:
             probs_raw = clf.predict_proba(window)[0]
