@@ -31,6 +31,7 @@ from benchmark.config import LOCAL_EXP4_15_CHANNELS, LOCAL_EXP4_PREPROCESSING
 from benchmark.data import (_atlas_unit_positions, apply_channel_scaler,
                             fit_channel_scaler)
 from benchmark.training import TrainConfig, fit_model
+from config import EEG_CHANNELS_TARGETS
 
 def resolve_device(preference="auto"):
     """Pick the training/inference device: CUDA, then Apple Metal (MPS), then CPU.
@@ -62,10 +63,9 @@ DEEP_MODELS = {
                   "Cardinal Sinc dynamics (13.5k params, best on local data)"),
 }
 
-# the online montage in acquisition order, and its modern standard_1005 names
-SOURCE_CHANNELS = ("Cz", "Pz", "C3", "C4", "T5", "T6", "Fz",
-                   "F7", "F8", "F3", "F4", "T3", "T4", "P3", "P4")
-CHANNELS = LOCAL_EXP4_15_CHANNELS          # T5->P7, T6->P8, T3->T7, T4->T8
+# EEG_CHANNELS_TARGETS is the acquisition montage; the benchmark indexes the same
+# electrodes by their modern standard_1005 names (T5->P7, T6->P8, T3->T7, T4->T8).
+CHANNELS = LOCAL_EXP4_15_CHANNELS
 FMIN = float(LOCAL_EXP4_PREPROCESSING["fmin_hz"])
 FMAX = float(LOCAL_EXP4_PREPROCESSING["fmax_hz"])
 SFREQ = float(LOCAL_EXP4_PREPROCESSING["sfreq_hz"])
@@ -91,18 +91,13 @@ def process_data(file_name, target_id_dict):
     """
     print(f"\n--- Loading: {file_name} ---")
     raw = mne.io.read_raw_fif(file_name, preload=True, verbose=False)
-    raw.pick(list(SOURCE_CHANNELS))
-    raw.rename_channels(dict(zip(SOURCE_CHANNELS, CHANNELS)))
+    raw.pick(list(EEG_CHANNELS_TARGETS))
+    raw.rename_channels(dict(zip(EEG_CHANNELS_TARGETS, CHANNELS)))
     raw.annotations.description = np.array(
         [str(d).strip().lower() for d in raw.annotations.description])
 
-    event_id = {}
-    for desc in set(raw.annotations.description):
-        for prefix, code in target_id_dict.items():
-            p = prefix.lower()
-            if desc == p or desc.startswith(p + "/"):
-                event_id[str(desc)] = code
-                break
+    from run import build_event_id   # imported here: run.py imports this module
+    event_id = build_event_id(raw, target_id_dict)
     if not event_id:
         raise ValueError(f"No annotations in {file_name} matched {target_id_dict}")
 
