@@ -1,8 +1,11 @@
 
 import glob
+import json
 import mne
 import numpy as np
 import os
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -11,11 +14,14 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from brainflow.board_shim import BoardShim
+from serial.tools import list_ports
 from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_REJECT,
                     EPOCH_TMIN, EPOCH_TMAX, FB_BANDS, FB_TRANS, CSP_COMPONENTS, FILTER_WARMUP_S,
                     STRIDE_S, CALIBRATION_SECONDS, CALIBRATION_SECONDS_DEEP,
-                    DEEP_EPOCHS, DEEP_SEED, DEEP_DEVICE, TARGET_MAPPINGS, CONF_FLOOR,
-                    RECENTER_ADAPTIVE, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
+                     DEEP_EPOCHS, DEEP_SEED, DEEP_DEVICE, TARGET_MAPPINGS, CONF_FLOOR,
+                     MIREPNET_EPOCHS, MIREPNET_SEED, MIREPNET_DEVICE, MIREPNET_WINDOW_MODE,
+                     LOCAL_EXP4_VALID_RUNS,
+                     RECENTER_ADAPTIVE, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -37,6 +43,12 @@ try:   # optional: enables the deep decoders; needs torch + the dl/ package
 except Exception as _deep_error:   # torch missing, or dl/ unavailable
     _DEEP_IMPORT_ERROR = _deep_error
     _HAS_DEEP = False
+try:   # MI-specific foundation model + official pretrained checkpoint
+    import mirepnet as mirepmod
+    _HAS_MIREPNET = True
+except Exception as _mirepnet_error:
+    _MIREPNET_IMPORT_ERROR = _mirepnet_error
+    _HAS_MIREPNET = False
 from utils.devices import OpenBCI
 from ws import WebSocket
 from smoother import Smoother
@@ -395,16 +407,131 @@ def select_device():
             return True
         print("pick 1 or 2")
 
+
+def select_serial_port():
+    """Let the operator select the OpenBCI COM port instead of relying only on a probe."""
+    ports = list(list_ports.comports())
+    print("\nSerial ports visible to Windows:")
+    if ports:
+        for index, port in enumerate(ports, 1):
+            maker = port.manufacturer or "unknown manufacturer"
+            print(f"  {index}) {port.device} — {maker} {port.description or ''}")
+        likely = [
+            port for port in ports
+            if "ftdi" in (port.manufacturer or "").lower()
+            or "ftdi" in (port.description or "").lower()
+            or "usbserial" in port.device.lower()
+            or (port.vid, port.pid) == (0x0403, 0x6015)
+        ]
+        default = likely[0].device if len(likely) == 1 else (ports[0].device if len(ports) == 1 else "")
+    else:
+        print("  (none detected)")
+        default = ""
+
+    prompt = f"OpenBCI serial port{f' [{default}]' if default else ' (example COM5)'}> "
+    while True:
+        try:
+            answer = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if not answer and default:
+            return default
+        if answer.isdigit() and ports and 1 <= int(answer) <= len(ports):
+            return ports[int(answer) - 1].device
+        if answer:
+            normalized = answer.upper()
+            known = {port.device.upper(): port.device for port in ports}
+            return known.get(normalized, normalized)
+        print("Enter a COM port, its list number, or Ctrl-C to cancel.")
+
+
+def select_live_maze():
+    """Collect the small amount of metadata needed for a headset-driven maze."""
+    print("\nLive MIRepNet OpenBCI maze")
+    print("The robot stops at every corner and waits for fresh post-stop EEG.")
+    print("Imagine LEFT hand = turn left; imagine RIGHT hand = turn right.")
+    print("\nChoose one of the four original fixed mazes:")
+    print("  1) Standard maze 1 (seed 11)")
+    print("  2) Standard maze 2 (seed 12)")
+    print("  3) Standard maze 3 (seed 13)")
+    print("  4) Standard maze 4 (seed 14)")
+    while True:
+        try:
+            raw = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if raw in ("1", "2", "3", "4"):
+            maze_number = int(raw)
+            break
+        print("enter 1, 2, 3, or 4")
+
+    try:
+        subject = input("subject id [live]> ").strip() or "live"
+        test = input(f"test id [live-mirepnet-maze{maze_number}]> ").strip()
+        test = test or f"live-mirepnet-maze{maze_number}"
+        print("view: 1) third-person  2) first-person  3) top-down")
+        view_raw = input("[1]> ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    view = {"1": "third", "2": "first", "3": "top", "": "third"}.get(view_raw)
+    if view is None:
+        print("unknown view; using third-person")
+        view = "third"
+    return {"maze_number": maze_number, "subject": subject, "test": test, "view": view}
+
+
+def launch_live_maze(config, checkpoint, calibrate):
+    """Open the Panda3D maze as a localhost client of the live decoder."""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sim_dir = os.path.join(project_root, "simulation")
+    src_dir = os.path.join(sim_dir, "src")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        item for item in (src_dir, env.get("PYTHONPATH")) if item
+    )
+    metadata = json.dumps({
+        "mode": "live-openbci-mirepnet-maze",
+        "checkpoint": os.path.basename(checkpoint) if checkpoint else "session model",
+        "calibration": "unlabeled" if calibrate is not False else "none",
+    })
+    command = [
+        sys.executable,
+        "-m",
+        "tiago_maze",
+        "--standard-maze",
+        str(config["maze_number"]),
+        "--view",
+        config["view"],
+        "--ws-url",
+        "ws://127.0.0.1:8765",
+        "--no-manual-keys",
+        "--subject",
+        config["subject"],
+        "--test",
+        config["test"],
+        "--meta",
+        metadata,
+    ]
+    print(f"\nOpening standard maze {config['maze_number']} for live EEG control...")
+    print("At each wall, wait for the prompt, then sustain LEFT- or RIGHT-hand imagery.")
+    print("Close the maze window to stop and save the EEG, decisions, CSV report, and trace.")
+    return subprocess.Popen(command, cwd=sim_dir, env=env)
+
 def select_decoder():
-    """Classical (EA+FB-CSP, Riemannian tangent) or deep (the two benchmark-winning
-    in-house networks). Returns a decoder kind string."""
+    """Choose a classical, project neural, or pretrained foundation decoder."""
     print("\nSelect decoder:")
     print("  1) EA + FB-CSP     — Euclidean Alignment (fast, default)")
     print("  2) Riemann tangent — Riemannian alignment + tangent space + LR")
     print("  3) Deep: CardinalFBC + compact dynamics — 32k params, benchmark rank 1")
     print("  4) Deep: Cardinal Sinc dynamics        — 13.5k params, best on local data")
+    print("  5) Foundation: MIRepNet — pretrained MI transformer, 5.14M params")
     if not _HAS_DEEP:
         print("     (3 and 4 need torch: `uv pip install torch`)")
+    if not _HAS_MIREPNET:
+        print("     (5 unavailable: install huggingface-hub + safetensors)")
     while True:
         try:
             c = input("> ").strip().lower()
@@ -422,18 +549,27 @@ def select_decoder():
                 print(f"deep decoders unavailable: {_DEEP_IMPORT_ERROR}")
                 continue
             return "deep_compactdyn" if c in ("3", "compactdyn", "deep") else "deep_sinc"
-        print("pick 1-4")
+        if c in ("5", "mirepnet", "foundation", "fm"):
+            if not _HAS_MIREPNET:
+                print(f"MIRepNet unavailable: {_MIREPNET_IMPORT_ERROR}")
+                continue
+            return "mirepnet"
+        print("pick 1-5")
 
-def select_deep_source(kind):
-    """Reuse a saved network or train a new one. Returns a checkpoint path, or
-    None to train from recordings."""
-    saved = deepmod.list_checkpoints(kind)
+def neural_module(kind):
+    return mirepmod if kind == "mirepnet" else deepmod
+
+
+def select_neural_source(kind):
+    """Reuse a saved neural model or train a new one from recordings."""
+    module = neural_module(kind)
+    saved = module.list_checkpoints(kind)
     if not saved:
         print("\nNo saved model for this decoder yet — training a new one.")
         return None
     print(f"\nSaved {decoder_label(kind)} models:")
     for i, path in enumerate(saved, 1):
-        print(f"  {i}) {deepmod.describe_checkpoint(path)}")
+        print(f"  {i}) {module.describe_checkpoint(path)}")
     print("  t) Train a new one from recordings")
     while True:
         try:
@@ -450,16 +586,29 @@ def select_deep_source(kind):
 def is_deep(kind):
     return kind.startswith("deep_")
 
+
+def is_foundation(kind):
+    return kind == "mirepnet"
+
+
+def is_neural(kind):
+    return is_deep(kind) or is_foundation(kind)
+
 def make_decoder(kind):
     """Instantiate the chosen decoder; all share the fit/set_reference/predict_proba/analyze API."""
     if is_deep(kind):
         return deepmod.DeepDecoder(kind, epochs=DEEP_EPOCHS, seed=DEEP_SEED,
                                    device=DEEP_DEVICE)
+    if is_foundation(kind):
+        return mirepmod.MIRepNetDecoder(epochs=MIREPNET_EPOCHS, seed=MIREPNET_SEED,
+                                        device=MIREPNET_DEVICE)
     return FilterBankTangentSpace() if kind == "riemann" else EAFilterBankCSP(n_components=2)
 
 def decoder_label(kind):
     if is_deep(kind):
         return deepmod.DEEP_MODELS[kind][1]
+    if is_foundation(kind):
+        return "MIRepNet foundation model (pretrained, 5.14M params)"
     return "Riemann tangent-space (RA)" if kind == "riemann" else "EA + FB-CSP (2 comp)"
 
 def load_epochs(kind, file_name):
@@ -467,7 +616,30 @@ def load_epochs(kind, file_name):
     causal path, or the benchmark's 4-40 Hz / 128 Hz / CAR profile for the nets."""
     if is_deep(kind):
         return deepmod.process_data(file_name, TARGET_MAPPINGS)
+    if is_foundation(kind):
+        return mirepmod.process_data(file_name, TARGET_MAPPINGS, MIREPNET_WINDOW_MODE)
     return process_data(file_name, TARGET_MAPPINGS)
+
+
+def warn_mirepnet_data_contract(files):
+    """Flag recordings outside the repository's frozen Local Exp4 manifest."""
+    outside = []
+    for path in files:
+        match = re.search(r"subject(\d+)_training_(\d+)_mi_raw", os.path.basename(path))
+        if not match:
+            outside.append(os.path.basename(path))
+            continue
+        subject, run = map(int, match.groups())
+        if run not in LOCAL_EXP4_VALID_RUNS.get(subject, ()):
+            outside.append(os.path.basename(path))
+    if outside:
+        print("\nMIRepNet data-contract warning: the validated Local Exp4 result applies only "
+              "to S1/S3/S4/S5/S6/S7/S8 runs 1-4 and S10 runs 5-8.")
+        print("Selected recordings outside that frozen manifest:")
+        for name in outside:
+            print(f"  - {name}")
+        print("They can still be explored, but their scores must not be mixed into the "
+              "validated eight-patient benchmark.")
 
 def run_offline():
     files = discover_files()
@@ -492,6 +664,10 @@ def run_offline():
         print(f"warning: file(s) used in both train and test: {[os.path.basename(f) for f in overlap]}")
 
     decoder_kind = select_decoder()
+    if is_foundation(decoder_kind):
+        warn_mirepnet_data_contract(train_files + test_files)
+
+    checkpoint = select_neural_source(decoder_kind) if is_foundation(decoder_kind) else None
 
     def load_xy(file_list):
         parts = [load_epochs(decoder_kind, f) for f in file_list]
@@ -502,6 +678,30 @@ def run_offline():
 
     X_train, y_train, g_train = load_xy(train_files)
     X_test, y_test, _ = load_xy(test_files)
+
+    if checkpoint is not None:
+        clf = mirepmod.MIRepNetDecoder.load(checkpoint, device=MIREPNET_DEVICE)
+        clf.fit_feature_adapter(X_train, y_train)
+        raw_pred = clf.predict_feature_adapter(X_test, balanced_protocol=False)
+        balanced_pred = clf.predict_feature_adapter(X_test, balanced_protocol=True)
+        raw_acc = accuracy_score(y_test, raw_pred)
+        acc = accuracy_score(y_test, balanced_pred)
+        labels = list(clf.classes_)
+        cm = confusion_matrix(y_test, balanced_pred, labels=labels)
+        print("\nFrozen MIRepNet encoder + fast patient calibration head")
+        print("  transformer weights updated: no")
+        print("  target test labels used for adaptation: no")
+        print("  completed test EEG used for unlabeled EA/feature scaling: yes")
+        print(f"  ordinary decision threshold: {raw_acc * 100:.2f}%")
+        print("  balanced-block threshold assumes the known 50/50 trial schedule")
+        print("\nConfusion matrix (rows=true, cols=pred):")
+        print("        " + "".join(f"{c:>8}" for c in labels))
+        for c, row in zip(labels, cm):
+            print(f"{c:>8}" + "".join(f"{v:>8}" for v in row))
+        print("\n" + "=" * 35)
+        print(f"Motor Imagery Test Accuracy: {acc * 100:.2f}%")
+        print("=" * 35)
+        return
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
     fold_acc = []
@@ -563,26 +763,53 @@ def save_decision_log(rows, out_path):
             f.write(",".join(str(x) for x in r) + "\n")
     print(f"decision log saved: {len(rows)} rows -> {out_path}")
 
-def run_online(headless=False):
+def run_online(headless=False, decoder_kind=None, calibrate=None, live_maze=None):
     synthetic = select_device()
     if synthetic is None:
         return
+    serial_port = None if synthetic else select_serial_port()
+    if not synthetic and serial_port is None:
+        return
 
-    decoder_kind = select_decoder()
+    decoder_kind = decoder_kind or select_decoder()
     deep_mode = is_deep(decoder_kind)
+    foundation_mode = is_foundation(decoder_kind)
+    neural_mode = is_neural(decoder_kind)
 
-    checkpoint = select_deep_source(decoder_kind) if deep_mode else None
+    if foundation_mode and calibrate is None:
+        print("\nMIRepNet live startup:")
+        print("  1) With unlabeled calibration (recommended; alignment + boundary seed)")
+        print("  2) Without calibration (use the saved model exactly as-is)")
+        while True:
+            try:
+                raw = input("> ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if raw in ("", "1", "yes", "y", "calibrated", "calibration"):
+                calibrate = True
+                break
+            if raw in ("2", "no", "n", "zero-shot", "none"):
+                calibrate = False
+                break
+            print("enter 1 or 2")
+
+    checkpoint = select_neural_source(decoder_kind) if neural_mode else None
     X_train = y_train = None
 
     if checkpoint is not None:
-        clf = deepmod.DeepDecoder.load(checkpoint, device=DEEP_DEVICE)
+        module = neural_module(decoder_kind)
+        device = MIREPNET_DEVICE if foundation_mode else DEEP_DEVICE
+        decoder_class = mirepmod.MIRepNetDecoder if foundation_mode else deepmod.DeepDecoder
+        clf = decoder_class.load(checkpoint, device=device)
         meta = clf.meta_
+        passes = meta.get("epochs_run")
+        pass_note = f"{passes} passes, " if passes is not None else ""
         print(f"\nLoaded {decoder_label(decoder_kind)} from {os.path.basename(checkpoint)}\n"
               f"  trained on {', '.join(meta['trained_on']) or 'unknown'} "
-              f"({meta['epochs_run']} passes, best epoch {meta['best_epoch']}, "
+              f"({pass_note}best epoch {meta['best_epoch']}, "
               f"held-out loss {meta['validation_loss']:.4f})")
         n_times = clf.n_times_
-        train_sfreq = float(deepmod.SFREQ)
+        train_sfreq = float(module.SFREQ)
     else:
         files = discover_files()
         if not files:
@@ -598,6 +825,9 @@ def run_online(headless=False):
         if train_files is None:
             return
 
+        if foundation_mode:
+            warn_mirepnet_data_contract(train_files)
+
         print(f"\nTraining on {len(train_files)} file(s):")
         for f in train_files:
             print(f"  - {os.path.basename(f)}")
@@ -607,13 +837,14 @@ def run_online(headless=False):
         y_train = np.concatenate([y for _, y in parts])
         groups = np.concatenate([[i] * len(y) for i, (_, y) in enumerate(parts)])
         n_channels, n_times = X_train.shape[-2], X_train.shape[-1]
-        shape_note = (f"{n_channels} ch x {n_times} samples" if deep_mode
+        shape_note = (f"{n_channels} ch x {n_times} samples" if neural_mode
                       else f"{X_train.shape[1]} bands x {n_channels} ch x {n_times} samples")
 
         clf = make_decoder(decoder_kind).fit(X_train, y_train, groups=groups)
         print(f"\nTrained {decoder_label(decoder_kind)} on {len(X_train)} epochs ({shape_note}).")
-        if deep_mode:
+        if neural_mode:
             saved_to = clf.save(sources=train_files)
+            checkpoint = saved_to
             print(f"saved for reuse: {os.path.relpath(saved_to, os.path.dirname(DATA_DIR))}")
 
         train_sfreq = float(mne.io.read_raw_fif(train_files[0], preload=False).info['sfreq'])
@@ -629,9 +860,11 @@ def run_online(headless=False):
     ws.start()
     smoother = Smoother(ws, conf_floor=CONF_FLOOR)
 
-    bci = OpenBCI(interval=STRIDE_S, synthetic=synthetic).open()
+    bci = OpenBCI(interval=STRIDE_S, synthetic=synthetic, serial_port=serial_port).open()
     if bci.board is None:
-        print("OpenBCI failed to open.")
+        print(f"OpenBCI failed to open on {serial_port or 'the selected port'}.")
+        print("Close OpenBCI GUI and every other program using that COM port, then retry. "
+              "Also confirm the Cyton is powered in PC mode and the Daisy is attached.")
         ws.stop()
         return
 
@@ -641,10 +874,11 @@ def run_online(headless=False):
               "predictions may degrade")
 
     warmup_n = int(round(FILTER_WARMUP_S * sfreq))
-    if deep_mode:
-        # the net's epoch is defined at 128 Hz; the live buffer is at the board rate
-        window_n = int(round(deepmod.EPOCH_S * sfreq))
-        buffer_n = deepmod.buffer_samples(sfreq, FILTER_WARMUP_S)
+    if neural_mode:
+        # Neural epochs are defined at their own rate; the live buffer stays at board rate.
+        module = neural_module(decoder_kind)
+        window_n = int(round(module.EPOCH_S * sfreq))
+        buffer_n = module.buffer_samples(sfreq, FILTER_WARMUP_S)
         make_window = lambda buf: clf.prepare_window(buf, sfreq)
     else:
         window_n = n_times
@@ -659,13 +893,13 @@ def run_online(headless=False):
           f"classify window: {window_n} samples ({window_n / sfreq:.2f}s), "
           f"buffer: {buffer_n} samples ({buffer_n / sfreq:.2f}s)")
 
-    # Classical decoders calibrate two things: the alignment reference (EA whitener /
-    # Riemannian mean) and the decision-boundary neutral. The nets have no alignment
-    # reference to fit, so their calibration is shorter and only seeds the boundary.
+    # Classical decoders and MIRepNet calibrate their alignment reference and boundary.
+    # Cardinal nets have no alignment reference, so their calibration is shorter.
     recenter = BoundaryRecenter()
     cal_seconds = CALIBRATION_SECONDS_DEEP if deep_mode else CALIBRATION_SECONDS
-    X_cal = record_calibration(bci, sfreq, train_idx, window_n, buffer_n, make_window,
-                               cal_seconds, deep_mode)
+    X_cal = (record_calibration(bci, sfreq, train_idx, window_n, buffer_n, make_window,
+                                cal_seconds, deep_mode)
+             if calibrate is not False else None)
     if X_cal is not None and len(X_cal) >= 2:
         if not deep_mode:
             clf.set_reference(X_cal)
@@ -675,6 +909,8 @@ def run_online(headless=False):
         mode = "adaptive" if recenter.adaptive else "FROZEN at calibration"
         what = "boundary seeded" if deep_mode else "aligned"
         print(f"{what} on {len(X_cal)} windows (boundary center={recenter.center:+.2f}, {mode})")
+    elif calibrate is False:
+        print("live calibration skipped; using the saved alignment and decision center=0.")
     else:
         print("calibration produced too little data; using the trained model as-is, center=0.")
 
@@ -693,8 +929,10 @@ def run_online(headless=False):
 
     prev_print_t = None
 
-    # GUI live mode: record the whole session (raw EEG + decoder trace) for replay/analysis.
-    record = not headless
+    # GUI and live-maze modes record raw EEG; every MIRepNet mode records each
+    # decision window. A live maze needs both sources for a defensible audit.
+    record_eeg = not headless or live_maze is not None
+    record_decisions = not headless or foundation_mode
     rec_eeg, rec_rows = [], []
     rec_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -707,7 +945,7 @@ def run_online(headless=False):
             print(f"(got {eeg_all.shape[0]} channels, need index {max(train_idx)})")
             return
 
-        if record:
+        if record_eeg:
             rec_eeg.append(eeg_all.astype(np.float32))     # all EEG channels, microvolts
 
         eeg = eeg_all[train_idx, :].astype(np.float64, copy=False) / 1e6
@@ -749,32 +987,69 @@ def run_online(headless=False):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         print(f"[{ts}  Δ{dt_ms:6.0f}ms]  {pred}  conf {conf*100:3.0f}% (ctr {recenter.center:+.1f})  [{breakdown}]  → {tag}{commit}")
 
-        if record:
+        if record_decisions:
             rec_rows.append((ts, f"{s:.4f}", f"{recenter.center:.4f}", f"{z:.4f}",
                              int(pred), f"{conf:.4f}", int(final)))
 
     bci.callback = on_chunk
     bci.start()
 
-    if record:
+    if record_eeg:
         print(f"\n📼 recording session → recordings/online_{rec_stamp}_raw.fif (+ _decisions.csv)")
+    elif record_decisions:
+        print(f"\nrecording MIRepNet decision windows → recordings/online_{rec_stamp}_decisions.xlsx")
 
+    maze_process = None
     try:
+        if live_maze is not None:
+            maze_process = launch_live_maze(live_maze, checkpoint, calibrate)
         if headless:
-            print("\nrunning headless — decisions broadcasting over websocket. Ctrl-C to stop.\n")
-            while True:
-                time.sleep(1)
+            if maze_process is not None:
+                print("\nlive maze running — close its window or press Ctrl-C here to stop.\n")
+                while maze_process.poll() is None:
+                    time.sleep(0.5)
+            else:
+                print("\nrunning headless — decisions broadcasting over websocket. Ctrl-C to stop.\n")
+                while True:
+                    time.sleep(1)
         else:
             gui.mainloop()
     except KeyboardInterrupt:
         print("\nStopping…")
     finally:
+        if maze_process is not None and maze_process.poll() is None:
+            maze_process.terminate()
+            try:
+                maze_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                maze_process.kill()
         bci.stop()
         bci.close()
         ws.stop()
-        if record:
+        if record_eeg:
             save_online_recording(rec_eeg, sfreq, os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_raw.fif"))
+        if record_decisions:
             save_decision_log(rec_rows, os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_decisions.csv"))
+        if foundation_mode:
+            try:
+                from scripts.mirepnet_excel import export_online_workbook
+                excel_path = export_online_workbook(
+                    rec_rows,
+                    os.path.join(RECORDINGS_DIR, f"online_{rec_stamp}_decisions.xlsx"),
+                    metadata={
+                        "mode": ("live maze" if live_maze is not None else
+                                 ("headless" if headless else "GUI")),
+                        "input_device": "synthetic" if synthetic else "OpenBCI USB",
+                        "checkpoint": os.path.abspath(checkpoint) if checkpoint else "session model",
+                        "decoder": decoder_label(decoder_kind),
+                        "stride_seconds": STRIDE_S,
+                        "calibration": "unlabeled" if calibrate is not False else "none",
+                        "standard_maze": (live_maze or {}).get("maze_number", ""),
+                    },
+                )
+                print(f"Excel decision report saved: {excel_path}")
+            except Exception as error:
+                print(f"Excel decision report failed: {error}")
 
 def menu():
     print("=" * 35)
@@ -787,6 +1062,17 @@ def menu():
 
 def main():
     argv = sys.argv[1:]
+    if argv and argv[0] == '--mirepnet-online':
+        run_online(headless=False, decoder_kind='mirepnet')
+        return
+    if argv and argv[0] == '--mirepnet-headless':
+        run_online(headless=True, decoder_kind='mirepnet')
+        return
+    if argv and argv[0] == '--mirepnet-live-maze':
+        live_maze = select_live_maze()
+        if live_maze is not None:
+            run_online(headless=True, decoder_kind='mirepnet', live_maze=live_maze)
+        return
     if argv and argv[0] in ('--headless', '--no-gui', '-H'):
         run_online(headless=True)
         return

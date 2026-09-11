@@ -1,6 +1,20 @@
 *.pyc
 .DS_Store
+.venv/
+__pycache__/
+.artifacts/
+.vscode/
 recordings/
+outputs/
+reports/
+results/
+presentation_work/
+MIRepNet_Implementation_and_Use/
+simulation/reports/
+ssvep/settings.json
+*.inspect.ndjson
+*.mp4
+/MIRepNet_*.pptx
 deepnet/cache/
 deepnet/checkpoints/
 deepnet/results/
@@ -9,3 +23,5 @@ deepnet/**/*.pt
 
 # trained online decoders (regenerate by training; large binaries)
 models/deep/*.pt
+models/mirepnet/*.pt
+models/mirepnet/*.training.json

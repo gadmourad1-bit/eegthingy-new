@@ -80,6 +80,56 @@ def _neighbors8(cell: tuple[int, int]):
                 yield (x + dx, y + dy)
 
 
+def _carve_forced_path(
+    params: MazeParams, rng: random.Random, forced: tuple[str, ...]
+) -> tuple[list[tuple[int, int]], list[int]]:
+    """Build any requested turn sequence without crossings.
+
+    Every new straight goes just beyond the current bounding box.  The current
+    point is already on the outside edge in the perpendicular axis, so the new
+    straight cannot cross an older one.  Two cells of clearance preserve the
+    same non-adjacency guarantee as the randomized generator.
+    """
+    if len(forced) != params.n_turns:
+        raise ValueError("turn_sequence length must equal n_turns")
+    if any(direction not in {"LEFT", "RIGHT"} for direction in forced):
+        raise ValueError("turn_sequence may contain only LEFT and RIGHT")
+
+    cells = [(0, 0)]
+    turn_idx: list[int] = []
+    heading = 0
+    clearance_min = max(2, params.min_gap)
+    clearance_max = max(clearance_min, params.max_gap)
+
+    def extend_beyond_bounds(active_heading: int) -> None:
+        xs = [cell[0] for cell in cells]
+        ys = [cell[1] for cell in cells]
+        gap = rng.randint(clearance_min, clearance_max)
+        x, y = cells[-1]
+        if active_heading == 0:
+            target = max(xs) + gap
+            steps = target - x
+        elif active_heading == 1:
+            target = max(ys) + gap
+            steps = target - y
+        elif active_heading == 2:
+            target = min(xs) - gap
+            steps = x - target
+        else:
+            target = min(ys) - gap
+            steps = y - target
+        dx, dy = DIR_VECS[active_heading]
+        for _ in range(steps):
+            cells.append((cells[-1][0] + dx, cells[-1][1] + dy))
+
+    for direction in forced:
+        extend_beyond_bounds(heading)
+        turn_idx.append(len(cells) - 1)
+        heading = _turn(heading, direction)
+    extend_beyond_bounds(heading)  # final corridor into the goal dead end
+    return cells, turn_idx
+
+
 def _carve_path(params: MazeParams, rng: random.Random) -> tuple[list[tuple[int, int]], list[int]]:
     """Backtracking search for a self-avoiding corridor with n_turns corners.
 
@@ -89,6 +139,9 @@ def _carve_path(params: MazeParams, rng: random.Random) -> tuple[list[tuple[int,
     sections never share a wall, so the laser always sees clean geometry.
     """
     n_turns = params.n_turns
+    forced = tuple(params.turn_sequence or ())
+    if forced:
+        return _carve_forced_path(params, rng, forced)
 
     start = (0, 0)
     heading = 0
@@ -152,8 +205,10 @@ def _carve_path(params: MazeParams, rng: random.Random) -> tuple[list[tuple[int,
             if placed < gap:
                 retract(placed)
                 continue
-            dirs = ["LEFT", "RIGHT"]
-            rng.shuffle(dirs)
+            depth = n_turns - turns_left
+            dirs = [forced[depth]] if forced else ["LEFT", "RIGHT"]
+            if not forced:
+                rng.shuffle(dirs)
             ok = False
             for d in dirs:
                 turn_idx.append(len(cells) - 1)

@@ -7,6 +7,7 @@ requires-python = "==3.12.*"
 dependencies = [
     "braindecode==1.6.1",
     "brainflow==5.21.0",
+    "huggingface-hub==1.29.0",
     "matplotlib==3.10.9",
     "mne==1.12.1",
     "numpy==2.4.4",
@@ -16,7 +17,9 @@ dependencies = [
     "pyriemann==0.11",
     "pyserial==3.5",
     "requests==2.33.1",
+    "safetensors==0.8.0",
     "scikit-learn==1.8.0",
+    "scipy==1.18.0",
     "torch==2.13.0",
     "trimesh==4.12.2",
     "websockets==16.0",

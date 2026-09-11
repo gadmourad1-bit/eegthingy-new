@@ -58,6 +58,7 @@ class MazeParams:
     min_gap: int = 1                    # min straight cells between corners
     max_gap: int = 3                    # max straight cells between corners
     seed: int | None = None
+    turn_sequence: tuple[str, ...] | None = None  # optional forced LEFT/RIGHT route
 
 
 @dataclass
@@ -79,6 +80,10 @@ class GameParams:
     offscreen: bool = False             # render offscreen (testing)
     max_frames: int | None = None       # exit after N frames (testing)
     screenshot: str | None = None       # save a screenshot on exit (testing)
+    decision_plan: list[dict] = field(default_factory=list)  # recorded EEG replay rows
+    # In-process testing hook. Called only when the robot reaches a corner;
+    # returns the planned row plus a newly computed prediction/confidence.
+    decision_provider: object | None = None
 
     # Fixed physics timestep (seconds). Integration + control run at this rate
     # regardless of display refresh, so behavior is identical at 60/144/240 Hz.

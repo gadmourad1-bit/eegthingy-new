@@ -1,0 +1,33 @@
+{
+  "format": "mirepnet-local-weight-manifest-v1",
+  "recommended_checkpoint": "mirepnet__4subjects_16runs_5ea48c54.pt",
+  "recommendation_scope": "validated Local Exp4 demonstrations and selected-patient protocol comparison",
+  "checkpoints": [
+    {
+      "file": "mirepnet__4subjects_16runs_5ea48c54.pt",
+      "sha256": "93bcf83b5c54f989f5a5f1b528e082ccc517673781447975351a2cd0b9535194",
+      "training_subjects": [3, 4, 6, 7],
+      "training_recordings": 16,
+      "note": "Recommended for the validated patient-calibration workflow; S5 was consulted during the earlier adaptive ladder."
+    },
+    {
+      "file": "mirepnet__3subjects_12runs_392770d5.pt",
+      "sha256": "2b020ef1fa1fd66cec62209adaf090c9369da9dff42c09b353bb286f1b480543",
+      "training_subjects": [3, 4, 6],
+      "training_recordings": 12
+    },
+    {
+      "file": "mirepnet__2subjects_8runs_ecd27e40.pt",
+      "sha256": "e2331b825e8bb9d86c5c5343ba7f797f01723e55b9b230463256bd93197cfff4",
+      "training_subjects": [3, 4],
+      "training_recordings": 8
+    },
+    {
+      "file": "mirepnet__20subjects_84runs_0e8be33a.pt",
+      "sha256": "2c20e9879cd0bd5d878c905ac1f0648226ba2d5e4d0a15e0bc502eb353addf21",
+      "training_subjects": [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+      "training_recordings": 84,
+      "note": "Not recommended as the default: strict zero-shot accuracy on held-out S22 was 49.69%."
+    }
+  ]
+}

@@ -34,7 +34,7 @@ def trace_filename(seed, when: datetime | None = None,
     ts = when.strftime("%Y%m%d_%H%M%S")
     if subject or test:
         return f"SUBJECT{_slug(subject)}_TEST{_slug(test)}_SEED{seed}_{ts}.npz"
-    return f"MAZE_{ts}_SEED{seed}.npz"
+    return f"tiago_maze_{ts}_seed{seed}.npz"
 
 
 def write_trace(

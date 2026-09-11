@@ -45,6 +45,7 @@ from . import maze as maze_mod
 from .controller import Logger, SafeWallTeleop, wrap_pi
 from .params import GameParams
 from .robot_model import UrdfLoader, _box_geomnode
+from .scripted import correction_decision, label_direction
 from .ws_client import DecisionClient
 
 
@@ -94,6 +95,7 @@ class MazeGame(ShowBase):
     def __init__(self, params: GameParams | None = None):
         self.params = params or GameParams()
         p = self.params
+        self.live_model_mode = p.extra_meta.get("mode") == "live-openbci-mirepnet-maze"
 
         loadPrcFileData("", "window-title TIAGo Maze — websocket wall course")
         loadPrcFileData("", "win-size 1280 800")
@@ -189,6 +191,23 @@ class MazeGame(ShowBase):
         if p.control.enable_ws:
             self.ws = DecisionClient(self.controller, p.control.ws_url)
             self.ws.start()
+
+        # Optional recorded-patient classifier test. A provider can run fresh
+        # inference exactly when a corner is reached; older plans may already
+        # contain predictions for backward-compatible replay.
+        self.scripted_plan = list(p.decision_plan)
+        self.decision_provider = p.decision_provider
+        if (self.scripted_plan and self.decision_provider is None and
+                any(row.get("predicted_label") is None for row in self.scripted_plan)):
+            raise ValueError(
+                "this session requires the live MIRepNet test process; "
+                "start it from main.py instead of opening the JSON plan directly"
+            )
+        self._script_attempted: set[int] = set()
+        self._script_submission: dict | None = None
+        self._script_stop_sim_time: float | None = None
+        self._last_script_row: dict | None = None
+        self._script_hold_for_recovery = False
 
         # Gameplay state.
         self.progress = 0          # correct turns completed
@@ -646,6 +665,11 @@ class MazeGame(ShowBase):
         self.last_decision_time = None
         self.decision_records = []
         self._pending_record = None
+        self._script_attempted = set()
+        self._script_submission = None
+        self._script_stop_sim_time = None
+        self._last_script_row = None
+        self._script_hold_for_recovery = False
         self._report_written = False
         self._trace_written = False
         self._traj = {k: [] for k in ("t", "x", "y", "yaw", "pitch")}
@@ -669,6 +693,7 @@ class MazeGame(ShowBase):
         if new == "STOPPED_WAITING_EEG":
             # Start the decision timer when the robot stops at a wall.
             self._wait_start = now
+            self._script_stop_sim_time = self._sim_time
         elif old == "STOPPED_WAITING_EEG" and new in ("TURN_L", "TURN_R"):
             # A decision was consumed: record how long it took to arrive and
             # open a per-decision record (finalized once the turn completes).
@@ -694,7 +719,11 @@ class MazeGame(ShowBase):
                     "robot_y": round(self.y, 3),
                     "robot_yaw_deg": round(math.degrees(self.yaw), 1),
                     "front_m": round(fd, 3) if math.isfinite(fd) else "",
+                    "source": "model" if self.live_model_mode else "manual_or_websocket",
                 }
+                if self._script_submission is not None:
+                    self._pending_record.update(self._script_submission)
+                    self._script_submission = None
                 self.logger.info(
                     f"Decision {len(self.decision_times)} ({chosen}) took {dt:.2f} s"
                 )
@@ -703,19 +732,44 @@ class MazeGame(ShowBase):
         self.decisions += 1
         tp = self._nearest_turn_point()
         result = "unknown"
+        source = (self._pending_record or {}).get("source", "manual_or_websocket")
         if tp is not None:
             heading = round(self.yaw / (math.pi / 2)) % 4
-            if heading == tp.out_heading:
+            reached_path = heading == tp.out_heading
+            if source == "recovery":
+                result = "recovery"
+                if reached_path:
+                    self.progress = max(self.progress, tp.index + 1)
+                    self._flash(
+                        f"automatic recovery complete — continuing to turn {tp.index + 2}",
+                        (0.45, 0.8, 1.0, 1),
+                    )
+                else:
+                    # A wrong left/right prediction leaves the robot facing
+                    # backwards after the first 90-degree recovery turn. Hold
+                    # it at this same corner for the second recovery turn.
+                    self._script_hold_for_recovery = True
+            elif reached_path:
                 result = "correct"
                 self.progress = max(self.progress, tp.index + 1)
+                message = (f"turn {tp.index + 1}/{len(self.maze.turn_points)}: "
+                           f"MIRepNet guessed {direction} — CORRECT"
+                           if source == "model" else
+                           f"turn {tp.index + 1}/{len(self.maze.turn_points)}: "
+                           f"{direction} - correct!")
                 self._flash(
-                    f"turn {tp.index + 1}/{len(self.maze.turn_points)}: {direction} - correct!",
+                    message,
                     (0.4, 1.0, 0.4, 1),
                 )
             else:
                 result = "wrong"
                 self.wrong_turns += 1
-                self._flash(f"wrong way! ({direction})", (1.0, 0.35, 0.3, 1))
+                message = (f"turn {tp.index + 1}: MIRepNet guessed {direction} — WRONG"
+                           if source == "model" else f"wrong way! ({direction})")
+                self._flash(
+                    message,
+                    (1.0, 0.35, 0.3, 1),
+                )
 
         # Finalize the per-decision record opened in _on_state_change.
         if self._pending_record is not None:
@@ -745,6 +799,9 @@ class MazeGame(ShowBase):
 
         p = self.params
         waits = [r["wait_s"] for r in self.decision_records]
+        model_records = [r for r in self.decision_records if r.get("source") == "model"]
+        scored_records = model_records or self.decision_records
+        model_correct = sum(1 for r in scored_records if r["result"] == "correct")
         elapsed = self.finish_time if self.finish_time is not None else self._sim_time
         when = when or datetime.now()
         meta = {
@@ -768,9 +825,12 @@ class MazeGame(ShowBase):
             "manual_keys": p.manual_keys,
             # --- results ---
             "n_turns": len(self.maze.turn_points),
-            "decisions": len(self.decision_records),
-            "correct": sum(1 for r in self.decision_records if r["result"] == "correct"),
+            "decisions": len(scored_records),
+            "correct": model_correct,
+            "accuracy": round(model_correct / len(scored_records), 6) if scored_records else 0.0,
             "wrong_turns": self.wrong_turns,
+            "recovery_turns": sum(1 for r in self.decision_records
+                                  if r.get("source") == "recovery"),
             "total_time_s": round(elapsed, 2),
             "total_wait_s": round(sum(waits), 2),
             "avg_wait_s": round(sum(waits) / len(waits), 3),
@@ -837,6 +897,62 @@ class MazeGame(ShowBase):
             return best
         return None
 
+    def _drive_scripted_plan(self) -> None:
+        """Feed one recorded MIRepNet guess at each corner, then recover safely."""
+        if not self.scripted_plan or self.completed:
+            return
+        if self._script_hold_for_recovery and self.controller.state == "FORWARD":
+            self._script_hold_for_recovery = False
+            self.controller.enter_stopped_waiting_EEG()
+            return
+        if self.controller.state != "STOPPED_WAITING_EEG":
+            return
+        if self._script_stop_sim_time is None or self._sim_time - self._script_stop_sim_time < 0.65:
+            return  # make the decision visible instead of turning instantly
+        tp = self._nearest_turn_point()
+        if tp is None or tp.index >= len(self.scripted_plan):
+            return
+        heading = round(self.yaw / (math.pi / 2)) % 4
+
+        if tp.index not in self._script_attempted:
+            row = dict(self.scripted_plan[tp.index])
+            if self.decision_provider is not None:
+                self._flash(
+                    f"corner {tp.index + 1}: testing MIRepNet on this EEG epoch...",
+                    (0.95, 0.9, 0.35, 1),
+                )
+                row = dict(self.decision_provider(tp.index, row))
+                self.scripted_plan[tp.index] = row
+            decision = int(row["predicted_label"])
+            submission = {
+                "source": "model",
+                "epoch": row.get("test_epoch", tp.index + 1),
+                "file": row.get("file", ""),
+                "epoch_in_file": row.get("epoch_in_file", ""),
+                "true_label": int(row["true_label"]),
+                "predicted_label": decision,
+                "confidence": row.get("confidence", ""),
+            }
+            disposition = self.controller.submit_decision(decision)
+            if disposition == "pending_decision":
+                self._script_attempted.add(tp.index)
+                self._script_submission = submission
+                self._last_script_row = row
+                self._flash(
+                    f"EEG epoch {submission['epoch']}: model says "
+                    f"{label_direction(decision)}",
+                    (0.95, 0.9, 0.35, 1),
+                )
+            return
+
+        # A wrong model turn faces a side wall. Correct it automatically without
+        # consuming another EEG epoch, so the demonstration can reach the goal.
+        decision = correction_decision(heading, tp.out_heading)
+        if decision:
+            disposition = self.controller.submit_decision(decision)
+            if disposition == "pending_decision":
+                self._script_submission = {"source": "recovery"}
+
     def _flash(self, text: str, color) -> None:
         self.hud_flash.setText(text)
         self.hud_flash["fg"] = color
@@ -887,6 +1003,7 @@ class MazeGame(ShowBase):
             self.controller.on_scan(scan)
             self.controller.on_odom(self.yaw)
             self.controller.control_loop()
+            self._drive_scripted_plan()
 
         # Integrate differential-drive kinematics with the current command.
         vx, wz = self.controller.cmd
@@ -1042,13 +1159,20 @@ class MazeGame(ShowBase):
         elapsed = self.finish_time if self.finish_time is not None else self._sim_time
         fd = c.front_dist if math.isfinite(c.front_dist) else float("inf")
         tgt = "none" if c.target_yaw is None else f"{math.degrees(c.target_yaw):7.1f} deg"
-        ws_status = self.ws.status if self.ws else "off (manual keys)"
+        ws_status = (("on-demand patient EEG test" if self.decision_provider is not None
+                      else "recorded EEG replay") if self.scripted_plan else
+                     (self.ws.status if self.ws else "off (manual keys)"))
         n_turns = len(self.maze.turn_points)
         last = "  -  " if self.last_decision_time is None else f"{self.last_decision_time:5.2f}s"
         if self.decision_times:
             avg = f"{sum(self.decision_times) / len(self.decision_times):5.2f}s"
         else:
             avg = "  -  "
+        model_records = [r for r in self.decision_records if r.get("source") == "model"]
+        model_correct = sum(r.get("result") == "correct" for r in model_records)
+        score_line = (f"model   {model_correct}/{len(model_records)} correct  "
+                      f"({100 * model_correct / len(model_records):.1f}%)"
+                      if model_records else "model   waiting for first EEG prediction")
         self.hud_status.setText(
             f"state   {c.state}\n"
             f"front   {fd:6.2f} m\n"
@@ -1056,6 +1180,7 @@ class MazeGame(ShowBase):
             f"cmd     v={c.cmd[0]:.2f} m/s  w={c.cmd[1]:+.2f} rad/s\n"
             f"ws      {ws_status}\n"
             f"turns   {self.progress}/{n_turns}   wrong {self.wrong_turns}\n"
+            + (f"{score_line}\n" if self.scripted_plan or self.live_model_mode else "") +
             f"decide  last {last}  avg {avg}  (n={len(self.decision_times)})\n"
             f"time    {elapsed:6.1f} s   seed {self.maze.seed}   view {self.view_mode}"
         )
@@ -1063,20 +1188,37 @@ class MazeGame(ShowBase):
         if self.completed:
             total = sum(self.decision_times)
             avg_v = total / len(self.decision_times) if self.decision_times else 0.0
-            self.hud_prompt.setText("MAZE COMPLETE!")
+            self.hud_prompt.setText("MIRepNet MAZE COMPLETE!" if self.scripted_plan or self.live_model_mode
+                                    else "MAZE COMPLETE!")
             self.hud_prompt["fg"] = (0.35, 1.0, 0.45, 1)
-            self.hud_flash.setText(
-                f"{len(self.decision_times)} decisions   "
-                f"avg {avg_v:.2f} s   total wait {total:.1f} s"
-            )
+            if self.scripted_plan or self.live_model_mode:
+                accuracy = 100 * model_correct / len(model_records) if model_records else 0.0
+                self.hud_flash.setText(
+                    f"model result: {model_correct}/{len(model_records)} correct "
+                    f"({accuracy:.1f}%)"
+                )
+            else:
+                self.hud_flash.setText(
+                    f"{len(self.decision_times)} decisions   "
+                    f"avg {avg_v:.2f} s   total wait {total:.1f} s"
+                )
             self.hud_flash["fg"] = (0.9, 0.95, 1.0, 1)
             self._flash_until = time.monotonic() + 1.0  # keep it shown
         elif c.state == "STOPPED_WAITING_EEG":
             # Steady prompt (no flashing) with a live decision timer.
             waited = 0.0 if self._wait_start is None else time.monotonic() - self._wait_start
-            self.hud_prompt.setText(
-                f"waiting for decision:  LEFT or RIGHT?   ({waited:4.1f} s)"
-            )
+            if self.scripted_plan:
+                tp = self._nearest_turn_point()
+                if tp is not None and tp.index in self._script_attempted:
+                    prompt = "wrong prediction — robot is correcting itself"
+                else:
+                    prompt = f"waiting to test the next patient EEG epoch... ({waited:3.1f} s)"
+                self.hud_prompt.setText(prompt)
+            else:
+                self.hud_prompt.setText(
+                    f"LEFT hand imagery = LEFT   |   RIGHT hand imagery = RIGHT\n"
+                    f"waiting for a fresh committed EEG decision...   ({waited:4.1f} s)"
+                )
             self.hud_prompt["fg"] = (1, 0.95, 0.4, 1)
         else:
             self.hud_prompt.setText("")

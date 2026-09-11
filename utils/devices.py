@@ -25,10 +25,12 @@ from serial.tools import list_ports
 
 # OpenBCI Cyton Daisy Board
 class OpenBCI:
-    def __init__(self, interval=1.0, synthetic=False):
+    def __init__(self, interval=1.0, synthetic=False, serial_port=None):
         self.interval = interval
         self.synthetic = synthetic
+        self.serial_port = (serial_port or '').strip()
         self.board = None
+        self.last_error = None
         self.filter = None
         self.worker = 0
         self.callback = None
@@ -52,8 +54,24 @@ class OpenBCI:
         self._drain_thread = None
 
     def find_serial_port(self):
+        ports = list(list_ports.comports())
+
+        # OpenBCI's USB dongle is an FTDI serial device.  If Windows exposes one
+        # unambiguous FTDI candidate, use it directly; requiring the board to
+        # answer a reset probe made a perfectly visible COM port look "missing"
+        # whenever the RF link was down or another program held the port.
+        likely = [
+            port.device for port in ports
+            if 'ftdi' in (port.manufacturer or '').lower()
+            or 'ftdi' in (port.description or '').lower()
+            or 'usbserial' in port.device.lower()
+            or (port.vid, port.pid) == (0x0403, 0x6015)
+        ]
+        if len(likely) == 1:
+            return likely[0]
+
         openbci_port = ''
-        for port in list_ports.comports():
+        for port in ports:
             try:
                 s = Serial(port=port.device, baudrate=115200, timeout=10)
                 s.write(b'v')
@@ -79,7 +97,13 @@ class OpenBCI:
             if self.synthetic:
                 board_id = BoardIds.SYNTHETIC_BOARD.value
             else:
-                params.serial_port = self.find_serial_port()
+                params.serial_port = self.serial_port or self.find_serial_port()
+                self.serial_port = params.serial_port
+                if not params.serial_port:
+                    raise RuntimeError(
+                        'No OpenBCI serial port was selected or detected. '
+                        'Choose the COM port shown by Windows.'
+                    )
                 board_id = BoardIds.CYTON_DAISY_BOARD.value
             temp_board = BoardShim(board_id, params)
             temp_board.prepare_session()
@@ -98,7 +122,9 @@ class OpenBCI:
             print(f"marker channel: {self.marker}")
             print(f"timestamp channel: {self.timestamp}")
         except Exception as error:
-            print('failed connecting to OpenBCI port, retrying: ', error)
+            self.last_error = error
+            port = self.serial_port or '<none>'
+            print(f'failed connecting to OpenBCI on {port}: {error}')
         
         return self
 

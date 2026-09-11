@@ -41,6 +41,13 @@ DECISION_FIELDS = [
     "robot_y",
     "robot_yaw_deg",
     "front_m",         # front laser distance at the stop
+    "source",          # model / recovery / manual_or_websocket
+    "epoch",           # recorded EEG test-epoch index
+    "file",            # source FIF recording
+    "epoch_in_file",
+    "true_label",      # 1=LEFT, 2=RIGHT (builds the open corridor)
+    "predicted_label", # 1=LEFT, 2=RIGHT (steers the robot)
+    "confidence",
 ]
 
 
@@ -50,7 +57,7 @@ def report_filename(seed, when: datetime | None = None,
     ts = when.strftime("%Y%m%d_%H%M%S")
     if subject or test:
         return f"SUBJECT{_slug(subject)}_TEST{_slug(test)}_SEED{seed}_{ts}.csv"
-    return f"MAZE_{ts}_SEED{seed}.csv"
+    return f"tiago_maze_{ts}_seed{seed}.csv"
 
 
 def write_report(

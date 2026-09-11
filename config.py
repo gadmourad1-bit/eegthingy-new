@@ -6,6 +6,15 @@ CALIBRATION_SECONDS_DEEP = 15     # deep decoders: boundary seed only (no alignm
 DEEP_EPOCHS = 200                 # training passes for the deep decoders (early stopping usually ends sooner)
 DEEP_SEED = 7
 DEEP_DEVICE = 'auto'              # 'auto' picks CUDA, then Apple Metal (MPS), then CPU; or force one
+MIREPNET_EPOCHS = 20              # foundation-model fine-tuning passes (early stopping usually ends sooner)
+MIREPNET_SEED = 7
+MIREPNET_DEVICE = 'auto'
+MIREPNET_WINDOW_MODE = 'task-repeat'  # audited Exp4 task 0--2 s, repeated to MIRepNet's required 4 s
+LOCAL_EXP4_VALID_RUNS = {
+    1: (1, 2, 3, 4), 3: (1, 2, 3, 4), 4: (1, 2, 3, 4),
+    5: (1, 2, 3, 4), 6: (1, 2, 3, 4), 7: (1, 2, 3, 4),
+    8: (1, 2, 3, 4), 10: (5, 6, 7, 8),
+}
 EEG_CHANNELS_MAPPING = [
     'Cz', 'Pz', 'C3', 'C4', 'T5', 'T6', 'Fz', 'DEAD',  # Cyton ch 1-8  (ch8 unplugged)
     'F7', 'F8', 'F3', 'F4', 'T3', 'T4', 'P3', 'P4',    # Daisy  ch 9-16

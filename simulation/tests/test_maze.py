@@ -91,3 +91,13 @@ def test_start_heading_points_down_corridor():
     dx = m.cells[1][0] - m.cells[0][0]
     dy = m.cells[1][1] - m.cells[0][1]
     assert math.isclose(m.start_yaw, math.atan2(dy, dx))
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_true_labels_can_force_the_exact_maze_route(seed):
+    """The replay maze must follow labels exactly: 1=left and 2=right."""
+    sequence = ("LEFT", "RIGHT", "RIGHT", "LEFT", "LEFT", "RIGHT")
+    m = maze_mod.generate(MazeParams(
+        n_turns=len(sequence), seed=seed, turn_sequence=sequence
+    ))
+    assert tuple(tp.direction for tp in m.turn_points) == sequence

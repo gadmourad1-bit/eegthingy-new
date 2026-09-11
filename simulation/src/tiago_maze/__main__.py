@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--seed", type=int, default=None, help="maze seed (random if omitted)")
     ap.add_argument("--turns", type=int, default=40, help="number of left/right turn points")
+    ap.add_argument("--standard-maze", type=int, choices=(1, 2, 3, 4), default=None,
+                    help="use one of the four frozen original 40-corner mazes")
     ap.add_argument("--view", choices=["third", "first", "top"], default="third",
                     help="initial camera: third-person, first-person, or top-down "
                          "(cycle in-game with [v])")
@@ -62,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help='extra run metadata saved into the CSV summary; a JSON '
                          'object (e.g. \'{"subject":"S01","condition":"A"}\') or '
                          '@path.json to read it from a file')
+    ap.add_argument("--decision-plan", default=None, metavar="PLAN.json",
+                    help="replay recorded MIRepNet predictions; true labels build the maze "
+                         "and predictions steer the robot")
     # Controller parameter overrides (same names as the ROS 2 parameters).
     ap.add_argument("--safe-dist", type=float, default=0.8, help="stop distance (m)")
     ap.add_argument("--forward-speed", type=float, default=0.60, help="drive speed (m/s)")
@@ -132,6 +137,40 @@ def build_params(argv: list[str] | None = None) -> GameParams:
     p.max_frames = args.frames
     p.screenshot = args.screenshot
     p.quiet = args.quiet
+    if args.standard_maze is not None:
+        from .standards import get_standard_maze
+        standard = get_standard_maze(args.standard_maze)
+        p.maze.seed = standard.seed
+        p.maze.n_turns = len(standard.route)
+        p.maze.turn_sequence = standard.directions
+        p.extra_meta.setdefault("standard_maze", standard.number)
+    if args.decision_plan:
+        from .scripted import directions_from_plan, load_decision_plan
+        try:
+            payload, plan_path = load_decision_plan(args.decision_plan)
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            parser.error(f"--decision-plan: {e}")
+        p.decision_plan = payload["turns"]
+        if "standard_maze" in payload:
+            from .standards import get_standard_maze
+            standard = get_standard_maze(payload["standard_maze"])
+            p.maze.seed = standard.seed
+            p.maze.n_turns = len(standard.route)
+            p.maze.turn_sequence = None
+        else:
+            p.maze.n_turns = len(p.decision_plan)
+            p.maze.turn_sequence = directions_from_plan(p.decision_plan)
+        p.control.enable_ws = False
+        p.manual_keys = False
+        p.subject_id = p.subject_id or str(payload.get("subject", ""))
+        p.test_id = p.test_id or "mirepnet-maze"
+        p.extra_meta.update({
+            "decision_plan": str(plan_path),
+            "mirepnet_protocol": payload.get("protocol", ""),
+            "standard_maze": payload.get("standard_maze", ""),
+            "inference_mode": payload.get("inference_mode", "precomputed"),
+            "eligible_patient_epochs": payload.get("eligible_patient_epochs", ""),
+        })
     return p
 
 
