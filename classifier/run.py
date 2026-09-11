@@ -23,6 +23,7 @@ from config import (DATA_DIR, EEG_CHANNELS_TARGETS, EEG_CHANNELS_MAPPING, EPOCH_
                      LOCAL_EXP4_VALID_RUNS,
                      RECENTER_ADAPTIVE, RECENTER_ALPHA, RECENTER_CLAMP, RECENTER_REST_CONF)
 from mne.decoding import CSP
+from mne.preprocessing import compute_current_source_density
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.linear_model import LogisticRegression
@@ -117,6 +118,55 @@ def process_data(file_name, target_id_dict):
     X, y = X[keep], y[keep]
 
     print(f"Created {len(y)} epochs ({int(keep.sum())}/{len(keep)} kept) for classes {sorted(set(y.tolist()))}")
+    return X, y
+
+
+def process_data_mirepnet(file_name, target_id_dict, tmin=0.5, tmax=2.5,
+                          apply_car=True, apply_laplacian=False,
+                          l_freq=8.0, h_freq=30.0):
+    """Load native 15-channel epochs for the alternative adapter pipeline.
+
+    The primary MIRepNet workflow uses ``classifier.mirepnet.process_data``.
+    This compatibility entry point keeps the independently developed
+    ``mirepnet_pipeline`` trainer from the destination repository runnable.
+    """
+    print(f"\n--- Loading (MIRepNet adapter): {file_name} ---")
+    raw = mne.io.read_raw_fif(file_name, preload=True)
+    raw.pick(EEG_CHANNELS_TARGETS)
+    raw.set_montage('standard_1020', on_missing='ignore')
+
+    if apply_car:
+        raw.set_eeg_reference('average', projection=False)
+    if apply_laplacian:
+        raw = compute_current_source_density(raw)
+
+    raw.filter(l_freq, h_freq, method='fir', phase='zero',
+               fir_design='firwin', verbose=False)
+    raw.annotations.description = np.array(
+        [str(d).strip().lower() for d in raw.annotations.description]
+    )
+
+    event_id = build_event_id(raw, target_id_dict)
+    if not event_id:
+        raise ValueError(
+            f"No annotations in {file_name} matched any prefix in {target_id_dict}. "
+            f"Annotations present: {sorted(set(raw.annotations.description))[:5]}…"
+        )
+    events, event_id_used = mne.events_from_annotations(raw, event_id=event_id)
+    epochs = mne.Epochs(
+        raw, events, event_id=event_id_used, tmin=tmin, tmax=tmax,
+        baseline=None, preload=True, proj=False, on_missing='warn'
+    )
+    X = epochs.get_data(copy=False)
+    y = epochs.events[:, -1]
+    p2p = (X.max(axis=2) - X.min(axis=2)).max(axis=1)
+    keep = p2p < EPOCH_REJECT['eeg'] * 2.0
+    X, y = X[keep], y[keep]
+    classes, counts = np.unique(y, return_counts=True)
+    print(
+        f"Created {len(y)} MIRepNet adapter epochs "
+        f"({int(keep.sum())}/{len(keep)} kept) for classes {classes} counts {counts}"
+    )
     return X, y
 
 def discover_files():

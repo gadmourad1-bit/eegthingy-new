@@ -224,3 +224,16 @@ device are configurable in `config.py` or through the evaluation script.
 
 The implementation is in `classifier/mirepnet.py`; focused compatibility tests
 are in `tests/test_mirepnet.py`.
+
+## Alternative MIRepNet adapter pipeline
+
+The destination repository's independent adapter implementation is preserved
+under `mirepnet_pipeline/`, including its pretrained and fine-tuned checkpoints.
+It can be trained directly with:
+
+```powershell
+uv run python mirepnet_pipeline/offline_train.py
+```
+
+The main application continues to use the validated `classifier/mirepnet.py`
+workflow exposed through the MIRepNet Workbench.
