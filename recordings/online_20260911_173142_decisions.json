@@ -1,0 +1,14 @@
+{
+  "format": "mirepnet-online-session-v1",
+  "created_at": "2026-09-11T17:32:34",
+  "metadata": {
+    "mode": "live maze",
+    "input_device": "OpenBCI USB",
+    "checkpoint": "C:\\Users\\frogh\\Documents\\GitHub\\eegthingy-new\\models\\mirepnet\\mirepnet__2subjects_4runs_7f21694e.pt",
+    "decoder": "MIRepNet foundation model (pretrained, 5.14M params)",
+    "stride_seconds": 0.2,
+    "calibration": "unlabeled",
+    "standard_maze": 1
+  },
+  "windows": []
+}

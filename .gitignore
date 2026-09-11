@@ -5,7 +5,6 @@
 __pycache__/
 .artifacts/
 .vscode/
-recordings/
 outputs/
 reports/
 results/
