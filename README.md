@@ -107,6 +107,40 @@ The default MIRepNet window mode is `task-repeat`, which takes the valid task
 window and repeats it to fill the required 4-second segment. This is the default
 used by the training scripts and the live workbench.
 
+### How Euclidean Alignment works
+
+Euclidean Alignment (EA) normalizes the spatial covariance of the measured EEG
+channels before the signal is interpolated. For each trial $X_k$ with shape
+`(15 channels, samples)`, the pipeline first removes its per-channel temporal
+mean and computes its channel covariance:
+
+$$
+C_k = \frac{(X_k - \bar{X}_k)(X_k - \bar{X}_k)^T}{T-1}
+$$
+
+The reference covariance is the average over the calibration or training
+trials:
+
+$$
+C_{ref} = \frac{1}{N}\sum_{k=1}^{N} C_k
+$$
+
+EA computes the inverse square root of this reference covariance,
+$R = C_{ref}^{-1/2}$, using an eigenvalue decomposition. Each trial is then
+aligned by left-multiplying its channels:
+
+$$
+X_{k,EA} = R X_k
+$$
+
+This makes the average aligned covariance approximately the identity matrix,
+reducing differences in channel scale, correlation, and subject-specific
+recording conditions. The same calibration-derived whitener is reused for
+subsequent live windows. EA does not create new electrodes or interpolate
+signals; it only transforms the genuinely observed channels. The resulting
+15-channel signal is then passed to the inverse-distance projection described
+below.
+
 ### How 15 channels become 45
 
 The headset does not measure all 45 electrodes expected by the pretrained
