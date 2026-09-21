@@ -92,8 +92,22 @@ CHECKPOINT_DIR = os.path.join(_ROOT, "models", "mirepnet")
 
 
 def resolve_device(preference="auto"):
-    if preference and preference != "auto":
-        return preference
+    preference = str(preference or "auto").lower()
+    if preference != "auto":
+        requested = torch.device(preference)
+        if requested.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "MIRepNet was configured for CUDA, but this PyTorch installation "
+                "cannot see a CUDA device. Use --device auto or install a CUDA build of PyTorch."
+            )
+        if requested.type == "mps" and not (
+                torch.backends.mps.is_available() and torch.backends.mps.is_built()):
+            raise RuntimeError(
+                "MIRepNet was configured for MPS, but this PyTorch installation cannot use MPS."
+            )
+        if requested.type not in {"cpu", "cuda", "mps"}:
+            raise ValueError(f"unsupported MIRepNet device {preference!r}")
+        return str(requested)
     if torch.cuda.is_available():
         return "cuda"
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
@@ -102,9 +116,11 @@ def resolve_device(preference="auto"):
 
 
 def device_label(device):
-    if str(device).startswith("cuda"):
-        return f"CUDA ({torch.cuda.get_device_name(0)})"
-    return "Apple Metal (MPS)" if str(device) == "mps" else "CPU"
+    device = torch.device(device)
+    if device.type == "cuda":
+        index = torch.cuda.current_device() if device.index is None else device.index
+        return f"CUDA:{index} ({torch.cuda.get_device_name(index)})"
+    return "Apple Metal (MPS)" if device.type == "mps" else "CPU"
 
 
 def interpolation_matrix(source_channels=SOURCE_CHANNELS):
@@ -411,9 +427,12 @@ class MIRepNetDecoder(BaseEstimator, ClassifierMixin):
         train_ds = TensorDataset(torch.from_numpy(Xa[~validation]), torch.from_numpy(y_index[~validation]))
         val_ds = TensorDataset(torch.from_numpy(Xa[validation]), torch.from_numpy(y_index[validation]))
         generator = torch.Generator().manual_seed(self.seed)
+        pin_memory = device.type == "cuda"
         train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True,
-                                  generator=generator, num_workers=0)
-        val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False, num_workers=0)
+                      generator=generator, num_workers=0,
+                      pin_memory=pin_memory)
+        val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False,
+                    num_workers=0, pin_memory=pin_memory)
 
         encoder_params = [p for name, p in model.named_parameters() if not name.startswith("final_layer.")]
         optimizer = torch.optim.AdamW([
@@ -434,7 +453,8 @@ class MIRepNetDecoder(BaseEstimator, ClassifierMixin):
             model.train()
             train_loss, train_correct, train_count = 0.0, 0, 0
             for xb, yb in train_loader:
-                xb, yb = xb.to(device), yb.to(device)
+                xb = xb.to(device, non_blocking=pin_memory)
+                yb = yb.to(device, non_blocking=pin_memory)
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(xb)
                 loss = criterion(logits, yb)
@@ -449,7 +469,8 @@ class MIRepNetDecoder(BaseEstimator, ClassifierMixin):
             val_loss, val_correct, val_count = 0.0, 0, 0
             with torch.no_grad():
                 for xb, yb in val_loader:
-                    xb, yb = xb.to(device), yb.to(device)
+                    xb = xb.to(device, non_blocking=pin_memory)
+                    yb = yb.to(device, non_blocking=pin_memory)
                     logits = model(xb)
                     loss = criterion(logits, yb)
                     val_loss += float(loss) * len(yb)

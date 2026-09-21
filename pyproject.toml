@@ -21,10 +21,18 @@ dependencies = [
     "safetensors==0.8.0",
     "scikit-learn==1.8.0",
     "scipy==1.18.0",
-    "torch==2.13.0",
+    "torch==2.11.0+cu128",
     "trimesh==4.12.2",
     "websockets==16.0",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
 
 [dependency-groups]
 dev = [
